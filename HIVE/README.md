@@ -266,11 +266,3 @@ and Euclidean ones don't.
 - Document in the report that UMAP cones are shown with a caveat.
 
 ---
-
-## Contacts / notes for the reviewer
-- Cones were validated by computing precision/recall against ground-truth tree
-  children in 512D: ~1% precision, ~22% recall — a structural property of the
-  HyCoCLIP space (trees overlap angularly), confirmed independently by the
-  distance-band overlap. This is finding C3 in the report.
-- Scale K=5 is for the 2D visual aperture only; it does not change 512D
-  precision/recall.

@@ -53,6 +53,23 @@ def _config_panel() -> html.Div:
                         "transition": "background-color 0.2s",
                     },
                 ),
+                html.Button(
+                    "UMAP",
+                    id="proj-umap-btn",
+                    style={
+                        "backgroundColor": "#6c757d",
+                        "color": "white",
+                        "border": "none",
+                        "padding": "0.5rem 1rem",
+                        "borderRadius": "6px",
+                        "cursor": "pointer",
+                        "width": "100%",
+                        "minWidth": "0",
+                        "flex": "1 1 0",
+                        "boxSizing": "border-box",
+                        "transition": "background-color 0.2s",
+                    },
+                ),
             ], style={"display": "flex", "gap": "0.5rem", "marginBottom": "0.5rem"}),
             # Projection comparison section
             html.Div([
@@ -416,7 +433,7 @@ html.Div([
         ], style={"display": "flex", "gap": "0.5rem", "marginBottom": "0.5rem"}),
         html.P(
             id="cone-projection-warning",
-            children="",
+            children="⚠️ UMAP is Euclidean — cone wedges don't carry hyperbolic meaning. 512D highlights are still valid.",
             style={
                 "color": "#dc3545",
                 "fontSize": "0.8rem",
@@ -746,4 +763,4 @@ def make_layout() -> html.Div:
             "backgroundColor": "#f7f9fc",
             "overflow": "hidden",
         },
-    ) 
+    )

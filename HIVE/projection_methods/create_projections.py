@@ -57,8 +57,8 @@ def parse_arguments():
     parser.add_argument("--plot", action="store_true", help="Generate and save plots")
     
     # Method selection
-    parser.add_argument("--methods", nargs="+", default=["horopca", "cosne"], 
-                       choices=["horopca", "cosne"], help="Methods to run")
+    parser.add_argument("--methods", nargs="+", default=["horopca", "cosne"],
+                       choices=["horopca", "cosne", "umap"], help="Methods to run")
     
     # HoroPCA args
     parser.add_argument("--horopca-components", type=int, default=2, help="HoroPCA components")
@@ -74,6 +74,11 @@ def parse_arguments():
     parser.add_argument("--cosne-perplexity", type=float, default=30, help="CO-SNE perplexity")
     parser.add_argument("--cosne-exaggeration", type=float, default=12.0, help="CO-SNE early exaggeration")
     parser.add_argument("--cosne-gamma", type=float, default=0.1, help="CO-SNE student-t gamma")
+    
+    # UMAP args
+    parser.add_argument("--umap-n-neighbors", type=int, default=15, help="UMAP number of neighbors")
+    parser.add_argument("--umap-min-dist", type=float, default=0.1, help="UMAP minimum distance")
+    parser.add_argument("--umap-metric", type=str, default="euclidean", help="UMAP distance metric")
     
     return parser.parse_args()
 
@@ -252,6 +257,24 @@ class ProjectionMethods:
         print(f"✓ HoroPCA complete: {embeddings.shape} → {reduced.shape}")
         
         return reduced
+    def apply_umap(self, embeddings, n_neighbors=15, min_dist=0.1, metric="euclidean", seed=42):
+        """Apply UMAP reduction to plain Euclidean 2D coordinates."""
+        print("Applying UMAP...")
+        import umap as umap_lib
+        np.random.seed(seed)
+        embeddings_np = embeddings.numpy() if torch.is_tensor(embeddings) else np.array(embeddings)
+
+        reducer = umap_lib.UMAP(
+            n_components=2,
+            n_neighbors=n_neighbors,
+            min_dist=min_dist,
+            metric=metric,
+            random_state=seed,
+        )
+        coords_2d = reducer.fit_transform(embeddings_np)
+
+        print(f"✓ UMAP complete: {embeddings_np.shape} → {coords_2d.shape}")
+        return torch.tensor(coords_2d, dtype=torch.float32)
     
     def apply_cosne(self, embeddings, lr=0.5, lr_h=0.01, perplexity=30, 
                    exaggeration=12.0, gamma=0.1, seed=42):
@@ -403,7 +426,27 @@ def main():
             print("  📈 Generating CO-SNE plot...")
             cosne_plot_path = Path(args.dataset_path) / "cosne_plot.png"
             plot_poincare_disk(cosne_result, labels, save_path=str(cosne_plot_path))
-    
+    if "umap" in args.methods:
+        umap_result = projector.apply_umap(
+            embeddings, args.umap_n_neighbors, args.umap_min_dist, args.umap_metric, args.seed
+        )
+
+        umap_data = {
+            'embeddings': umap_result.numpy(),
+            'labels': labels,
+            'method': 'UMAP',
+            'parameters': {
+                'n_neighbors': args.umap_n_neighbors,
+                'min_dist': args.umap_min_dist,
+                'metric': args.umap_metric,
+            }
+        }
+
+        umap_path = Path(args.dataset_path) / "umap_embeddings.pkl"
+        with open(umap_path, 'wb') as f:
+            pickle.dump(umap_data, f)
+        print(f"✓ Saved UMAP embeddings: {umap_path}")
+        
     print(f"\n✅ Projections complete! Results saved to: {args.dataset_path}")
     print("="*60)
 

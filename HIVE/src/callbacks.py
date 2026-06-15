@@ -1256,11 +1256,11 @@ def register_callbacks(app: dash.Dash) -> None:
         return fig_disk
 
 #####################################################################################
-    # Auto-switch projection method when clicking in dual view 
     @app.callback(
         Output("proj", "data", allow_duplicate=True),
         Output("proj-horopca-btn", "style", allow_duplicate=True),
         Output("proj-cosne-btn", "style", allow_duplicate=True),
+        Output("proj-umap-btn", "style", allow_duplicate=True),
         [
             Input("scatter-disk-1", "clickData"),
             Input("scatter-disk-2", "clickData"),
@@ -1271,10 +1271,10 @@ def register_callbacks(app: dash.Dash) -> None:
     def _auto_switch_projection_visual(click_disk_1, click_disk_2, comparison_mode):
         ctx = callback_context
         if not ctx.triggered or not comparison_mode:
-            return dash.no_update, dash.no_update, dash.no_update
-        
+            return dash.no_update, dash.no_update, dash.no_update, dash.no_update
+
         triggered_id = ctx.triggered_id
-        
+
         # Button styles
         active_style = {
             "backgroundColor": "#28a745",
@@ -1293,15 +1293,15 @@ def register_callbacks(app: dash.Dash) -> None:
             **active_style,
             "backgroundColor": "#6c757d"
         }
-        
+
         if triggered_id == "scatter-disk-1":
             # Clicked on HoroPCA plot (left) - switch to HoroPCA
-            return "horopca", active_style, inactive_style
+            return "horopca", active_style, inactive_style, inactive_style
         elif triggered_id == "scatter-disk-2":
             # Clicked on CO-SNE plot (right) - switch to CO-SNE
-            return "cosne", inactive_style, active_style
-        
-        return dash.no_update, dash.no_update, dash.no_update
+            return "cosne", inactive_style, active_style, inactive_style
+
+        return dash.no_update, dash.no_update, dash.no_update, dash.no_update
     
 #####################################################################################
     @app.callback(
@@ -2236,6 +2236,23 @@ def register_callbacks(app: dash.Dash) -> None:
         dy = yh / (1.0 + zh)
         coords_2d = np.stack([dx, dy], axis=1)
 
+        umap_warning = None
+        if proj == "umap":
+            umap_warning = html.Div(
+                "⚠️ UMAP is Euclidean — cone wedges are shown for reference only and "
+                "don't carry hyperbolic meaning. The 512D highlights (purple rings) "
+                "are still geometrically valid.",
+                style={
+                    "backgroundColor": "#fff3cd",
+                    "border": "1px solid #ffc107",
+                    "borderRadius": "4px",
+                    "padding": "0.4rem 0.6rem",
+                    "fontSize": "0.75rem",
+                    "color": "#856404",
+                    "marginBottom": "0.5rem",
+                }
+            )
+
         from .cone_utils import compute_cone_data
 
         type_colors = {
@@ -2306,6 +2323,7 @@ def register_callbacks(app: dash.Dash) -> None:
             gt_in_outward = gt_children_union & outward_intersection
 
             return html.Div([
+                umap_warning,
                 html.H6("∩ Cone Intersection",
                         style={"margin": "0 0 0.5rem 0",
                                "color": "#2c3e50"}),
@@ -2388,6 +2406,7 @@ def register_callbacks(app: dash.Dash) -> None:
         )
 
         return html.Div([
+            umap_warning,
             # Point info
             html.Div([
                 html.Div(style={
@@ -2883,6 +2902,13 @@ def register_callbacks(app: dash.Dash) -> None:
                 {"param": "Exaggeration", "value": "12.0", "description": "Early exaggeration factor"},
                 {"param": "Gamma", "value": "0.1", "description": "Student-t distribution parameter"},
             ]
+        elif projection_method == "umap":
+            params = [
+                {"param": "n_neighbors", "value": "15", "description": "Local neighborhood size"},
+                {"param": "min_dist", "value": "0.1", "description": "Minimum distance in 2D"},
+                {"param": "metric", "value": "euclidean", "description": "Distance metric (Euclidean)"},
+                {"param": "n_components", "value": "2", "description": "Output dimensions"},
+            ]
         else:
             return html.Div("Unknown projection method")
         
@@ -2941,23 +2967,24 @@ def register_callbacks(app: dash.Dash) -> None:
 
 
 #####################################################################################
-    # Projection button selection callbacks
     @app.callback(
         Output("proj", "data"),
         Output("proj-horopca-btn", "style"),
         Output("proj-cosne-btn", "style"),
+        Output("proj-umap-btn", "style"),
         Input("proj-horopca-btn", "n_clicks"),
         Input("proj-cosne-btn", "n_clicks"),
+        Input("proj-umap-btn", "n_clicks"),
         State("proj", "data"),
         prevent_initial_call=True,
     )
-    def _update_projection_selection(horopca_clicks, cosne_clicks, current_proj):
+    def _update_projection_selection(horopca_clicks, cosne_clicks, umap_clicks, current_proj):
         ctx = callback_context
         if not ctx.triggered:
-            return dash.no_update, dash.no_update, dash.no_update
-        
+            return dash.no_update, dash.no_update, dash.no_update, dash.no_update
+
         triggered_id = ctx.triggered[0]["prop_id"].split(".")[0]
-        
+
         # Button styles
         active_style = {
             "backgroundColor": "#28a745",
@@ -2976,13 +3003,15 @@ def register_callbacks(app: dash.Dash) -> None:
             **active_style,
             "backgroundColor": "#6c757d"
         }
-        
+
         if triggered_id == "proj-horopca-btn":
-            return "horopca", active_style, inactive_style
+            return "horopca", active_style, inactive_style, inactive_style
         elif triggered_id == "proj-cosne-btn":
-            return "cosne", inactive_style, active_style
-        
-        return dash.no_update, dash.no_update, dash.no_update
+            return "cosne", inactive_style, active_style, inactive_style
+        elif triggered_id == "proj-umap-btn":
+            return "umap", inactive_style, inactive_style, active_style
+
+        return dash.no_update, dash.no_update, dash.no_update, dash.no_update
 
 #####################################################################################
     # Interpolation number input callbacks

@@ -2,6 +2,7 @@ import dash
 from dash import Input, Output, State, callback_context, html, dcc
 import numpy as np
 import plotly.graph_objs as go
+from .cone_utils import compute_cone_highlights_512d
 from .projection import _interpolate_hyperbolic
 
 from .image_utils import _encode_image, _create_content_element
@@ -797,10 +798,11 @@ def register_callbacks(app: dash.Dash) -> None:
         Input("dataset-dropdown", "value"),
         State("points-store", "data"),
         State("meta-store", "data"),
+        Input("show-512d", "data"),
     )
     def _scatter(edata, sel, proj, traversal_path, cone_direction,
                  labels_data, target_names, mode, k_neighbors,
-                 data_store, dataset_name, points, meta):
+                 data_store, dataset_name, points, meta, show_512d):
         if edata is None or labels_data is None:
             print("Warning: No embedding or label data available for plotting")
             return {}
@@ -829,7 +831,7 @@ def register_callbacks(app: dash.Dash) -> None:
                 neighbor_indices = neighbor_indices[neighbor_indices != sel[0]][:k_neighbors]
             else:
                 neighbor_indices = []
-        elif mode == "tree" and sel and len(sel) == 1:
+        elif mode in ("tree", "tree_cones") and sel and len(sel) == 1:
             selected_idx = sel[:1]
             tree_connections = []
             try:
@@ -1212,7 +1214,7 @@ def register_callbacks(app: dash.Dash) -> None:
 
         # ── Cone mode: draw wedge + highlight 512D members ────────────
         # ── Cone mode: one wedge per selected point ────────────────────
-        if mode == "cones" and sel and len(sel) >= 1:
+        if mode in ("cones", "tree_cones") and sel and len(sel) >= 1:
             from .cone_utils import (
                 compute_cone_aperture_2d,
                 compute_cone_wedge_path,
@@ -1252,6 +1254,60 @@ def register_callbacks(app: dash.Dash) -> None:
                     ))
 
             fig_disk.update_layout(shapes=shapes)
+
+            # ── 512D cone highlights (purple rings) ──────────────────
+            if show_512d:
+                hl_outward = []
+                hl_inward  = []
+
+                for anchor_idx in sel:
+                    if anchor_idx >= len(dx):
+                        continue
+                    hl = compute_cone_highlights_512d(
+                        anchor_idx=anchor_idx,
+                        dataset_name=dataset_name,
+                        scale=1.0,
+                        band=None,
+                    )
+                    if cone_direction in ("outward", "both"):
+                        hl_outward += hl["outward_512d"]
+                    if cone_direction in ("inward", "both"):
+                        hl_inward  += hl["inward_512d"]
+
+                hl_outward = [i for i in set(hl_outward)
+                            if i < len(dx) and i not in sel]
+                hl_inward  = [i for i in set(hl_inward)
+                            if i < len(dx) and i not in sel]
+
+                if hl_outward:
+                    fig_disk.add_trace(go.Scatter(
+                        x=[dx[i] for i in hl_outward],
+                        y=[dy[i] for i in hl_outward],
+                        mode="markers",
+                        marker=dict(
+                            size=11,
+                            color="rgba(0,0,0,0)",
+                            line=dict(width=2, color="#9b59b6"),
+                        ),
+                        name="512D outward cone",
+                        hoverinfo="skip",
+                        showlegend=True,
+                    ))
+
+                if hl_inward:
+                    fig_disk.add_trace(go.Scatter(
+                        x=[dx[i] for i in hl_inward],
+                        y=[dy[i] for i in hl_inward],
+                        mode="markers",
+                        marker=dict(
+                            size=11,
+                            color="rgba(0,0,0,0)",
+                            line=dict(width=2, color="#d7bde2"),
+                        ),
+                        name="512D inward cone",
+                        hoverinfo="skip",
+                        showlegend=True,
+                    ))
 
         return fig_disk
 
@@ -1366,7 +1422,7 @@ def register_callbacks(app: dash.Dash) -> None:
                 if mode == "compare": max_points = 5
                 elif mode == "interpolate": max_points = 2
                 elif mode == "neighbors": max_points = 1
-                elif mode == "cones":
+                elif mode in ("cones", "tree_cones"):
                     max_points = 5 if cone_multi_mode else 1
                 if len(new_sel) > max_points:
                     new_sel = new_sel[-max_points:]
@@ -1790,73 +1846,85 @@ def register_callbacks(app: dash.Dash) -> None:
     Input("tree-mode-btn", "n_clicks"),
     Input("neighbors-mode-btn", "n_clicks"),
     Input("cones-mode-btn", "n_clicks"),
+    State("mode", "data"),
     prevent_initial_call=True,
     )
     def _update_mode(compare_clicks, interpolate_clicks, tree_clicks,
-                 neighbors_clicks, cones_clicks):
+                 neighbors_clicks, cones_clicks, current_mode):
         ctx = callback_context
         triggered_id = ctx.triggered[0]["prop_id"].split(".")[0]
 
         base_style = {
-            "color": "white",
-            "border": "none",
-            "padding": "0.5rem 1rem",
-            "borderRadius": "6px",
-            "cursor": "pointer",
-            "width": "100%",
-            "minWidth": "0",
-            "flex": "1 1 0",
-            "boxSizing": "border-box",
+            "color": "white", "border": "none",
+            "padding": "0.5rem 1rem", "borderRadius": "6px",
+            "cursor": "pointer", "width": "100%", "minWidth": "0",
+            "flex": "1 1 0", "boxSizing": "border-box",
             "transition": "background-color 0.2s",
         }
         inactive = {**base_style, "backgroundColor": "#007bff"}
         active   = {**base_style, "backgroundColor": "green"}
+        tree_inactive = {**base_style, "backgroundColor": "#995418"}
+        tree_active   = {**base_style, "backgroundColor": "green"}
         cones_inactive = {**base_style, "backgroundColor": "#e67e22"}
+        cones_active   = {**base_style, "backgroundColor": "green"}
 
-        # Default all inactive
-        compare_style   = inactive
-        interpolate_style = inactive
-        tree_style      = inactive
-        neighbors_style = inactive
-        cones_style     = cones_inactive
+        # Decode current tree/cones state from the mode string
+        cur = current_mode or "compare"
+        tree_on  = cur in ("tree", "tree_cones")
+        cones_on = cur in ("cones", "tree_cones")
 
-        # Default all controls hidden
-        interpolate_controls_style = {"display": "none"}
-        neighbors_controls_style   = {"display": "none"}
-        cones_controls_style       = {"display": "none"}
-        tree_traversal_style       = {"display": "none"}
-        cone_panel_style           = {"display": "none"}
+        # Toggle logic for the two analysis buttons
+        if triggered_id == "tree-mode-btn":
+            tree_on = not tree_on
+        elif triggered_id == "cones-mode-btn":
+            cones_on = not cones_on
+        else:
+            # Any exploration button turns BOTH analysis toggles off
+            tree_on = False
+            cones_on = False
 
-        mode = "compare"
-        instructions = "Select up to 5 points to compare."
-
-        if triggered_id == "interpolate-mode-btn":
+        # Determine the resulting mode
+        if triggered_id in ("tree-mode-btn", "cones-mode-btn"):
+            if tree_on and cones_on:
+                mode = "tree_cones"
+            elif tree_on:
+                mode = "tree"
+            elif cones_on:
+                mode = "cones"
+            else:
+                mode = "compare"   # both toggled off → fall back to compare
+        elif triggered_id == "interpolate-mode-btn":
             mode = "interpolate"
-            interpolate_style = active
-            interpolate_controls_style = {"display": "block"}
-            instructions = "Select 2 points to traverse between."
-
-        elif triggered_id == "tree-mode-btn":
-            mode = "tree"
-            tree_style = active
-            tree_traversal_style = {"display": "block"}
-            instructions = "Select 1 point to view its lineage."
-
         elif triggered_id == "neighbors-mode-btn":
             mode = "neighbors"
-            neighbors_style = active
-            neighbors_controls_style = {"display": "block"}
-            instructions = "Select 1 point to view its neighbors."
-
-        elif triggered_id == "cones-mode-btn":
-            mode = "cones"
-            cones_style = active
-            cones_controls_style = {"display": "block"}
-            cone_panel_style = {"display": "block"}
-            instructions = "Select 1-5 point to draw its entailment cone."
-
         else:
-            compare_style = active
+            mode = "compare"
+
+        # Styles
+        compare_style     = active if mode == "compare" else inactive
+        interpolate_style = active if mode == "interpolate" else inactive
+        neighbors_style   = active if mode == "neighbors" else inactive
+        tree_style = tree_active if tree_on else tree_inactive
+        cones_style       = cones_active if cones_on else cones_inactive
+
+        # Controls visibility
+        interpolate_controls_style = {"display": "block"} if mode == "interpolate" else {"display": "none"}
+        neighbors_controls_style   = {"display": "block"} if mode == "neighbors" else {"display": "none"}
+        cones_controls_style       = {"display": "block"} if cones_on else {"display": "none"}
+        tree_traversal_style       = {"display": "block"} if (tree_on and not cones_on) else {"display": "none"}
+        cone_panel_style           = {"display": "block"} if cones_on else {"display": "none"}
+
+        instr = {
+            "compare": "Select up to 5 points to compare.",
+            "interpolate": "Select 2 points to traverse between.",
+            "neighbors": "Select 1 point to view its neighbors.",
+            "tree": "Select 1 point to view its lineage.",
+            "cones": "Select 1-5 points to draw entailment cones.",
+            "tree_cones": "Tree + Cones: select a point to see both.",
+        }[mode]
+
+        # Clear selection only when leaving to an exploration mode
+        clear_sel = triggered_id not in ("tree-mode-btn", "cones-mode-btn")
 
         return (
             mode,
@@ -1865,8 +1933,9 @@ def register_callbacks(app: dash.Dash) -> None:
             interpolate_controls_style, neighbors_controls_style,
             cones_controls_style, tree_traversal_style,
             cone_panel_style,
-            instructions,
-            [], None
+            instr,
+            [] if clear_sel else dash.no_update,
+            None if clear_sel else dash.no_update,
         )
     
     #####################################################################################
@@ -2152,6 +2221,8 @@ def register_callbacks(app: dash.Dash) -> None:
             return html.H4("Neighbors")
         elif mode == "cones":
             return html.H4("Entailment Cones")
+        elif mode == "tree_cones":
+            return html.H4("Tree + Entailment Cones")
         else:
             return html.H4("Point comparison")
 
@@ -2205,7 +2276,7 @@ def register_callbacks(app: dash.Dash) -> None:
     )
     def _update_cone_panel(sel, cone_direction, active_tab, mode,
                            emb_data, points, dataset_name, proj):
-        if mode != "cones" or not sel:
+        if mode not in ("cones", "tree_cones") or not sel:
             return html.P(
                 "Select 1-5 points to draw entailment cones.",
                 style={"color": "#6c757d", "fontStyle": "italic"}
@@ -3006,5 +3077,37 @@ def register_callbacks(app: dash.Dash) -> None:
             return max(1, current_value - 1)  # Don't go below 1
         
         return dash.no_update
+    
+#####################################################################################
+# Toggle True GEOMETRY button
+    @app.callback(
+        Output("show-512d", "data"),
+        Output("show-512d-toggle", "style"),
+        Output("show-512d-knob", "style"),
+        Input("show-512d-toggle", "n_clicks"),
+        State("show-512d", "data"),
+        prevent_initial_call=True,
+    )
+    def _toggle_show_512d(n_clicks, current):
+        new = not current
+        track_on = {
+            "width": "44px", "height": "24px",
+            "backgroundColor": "#41ae76",
+            "borderRadius": "12px", "border": "none",
+            "cursor": "pointer", "padding": "3px",
+            "display": "flex", "alignItems": "center",
+            "transition": "background-color 0.2s",
+        }
+        track_off = {**track_on, "backgroundColor": "#4a5568"}
+        knob_on = {
+            "width": "18px", "height": "18px",
+            "backgroundColor": "white", "borderRadius": "50%",
+            "transition": "transform 0.2s",
+            "transform": "translateX(20px)",
+        }
+        knob_off = {**knob_on, "transform": "translateX(0px)"}
+        if new:
+            return True, track_on, knob_on
+        return False, track_off, knob_off
 
     # End of callbacks

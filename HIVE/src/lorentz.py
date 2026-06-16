@@ -459,6 +459,7 @@ def cone_members_truncated_lorentz(
 
     # --- hyperbolic distance d(x, y) = arccosh(-<x,y>_L) ------------------
     dist = torch.acosh(torch.clamp(lhs, min=1.0 + eps))
-    within_band = dist <= band
-
-    return angular & radial & within_band
+    if band is not None:
+        within_band = dist <= band
+        return angular & radial & within_band
+    return angular & radial

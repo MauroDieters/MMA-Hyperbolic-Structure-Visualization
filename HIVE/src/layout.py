@@ -154,12 +154,6 @@ html.Div([
         }),
     ], style={"display": "flex", "gap": "0.5rem", "marginBottom": "0.4rem"}),
     html.Div([
-        html.Button("Tree", id="tree-mode-btn", style={
-            "backgroundColor": "#007bff", "color": "white",
-            "border": "none", "padding": "0.5rem 1rem",
-            "borderRadius": "6px", "cursor": "pointer",
-            "flex": "1 1 0", "transition": "background-color 0.2s",
-        }),
         html.Button("Neighbors", id="neighbors-mode-btn", style={
             "backgroundColor": "#007bff", "color": "white",
             "border": "none", "padding": "0.5rem 1rem",
@@ -186,6 +180,13 @@ html.Div([
     html.Div([
         html.Button("⬡ Cones", id="cones-mode-btn", style={
             "backgroundColor": "#e67e22", "color": "white",
+            "border": "none", "padding": "0.5rem 1rem",
+            "borderRadius": "6px", "cursor": "pointer",
+            "width": "100%", "transition": "background-color 0.2s",
+            "fontWeight": "600",
+        }),
+        html.Button("Tree", id="tree-mode-btn", style={
+            "backgroundColor": "#995418", "color": "white",
             "border": "none", "padding": "0.5rem 1rem",
             "borderRadius": "6px", "cursor": "pointer",
             "width": "100%", "transition": "background-color 0.2s",
@@ -331,6 +332,31 @@ html.Div([
     id="cones-controls",
     style={"display": "none"},
     children=[
+        html.Div([
+            html.Span("Ground Geometry", style={
+                "color": "#e2e8f0", "fontSize": "0.82rem",
+                "marginRight": "0.5rem", "fontWeight": "500",
+            }),
+            html.Button(
+                id="show-512d-toggle",
+                n_clicks=0,
+                children=html.Div(id="show-512d-knob", style={
+                    "width": "18px", "height": "18px",
+                    "backgroundColor": "white", "borderRadius": "50%",
+                    "transition": "transform 0.2s",
+                    "transform": "translateX(20px)",
+                }),
+                style={
+                    "width": "44px", "height": "24px",
+                    "backgroundColor": "#41ae76",
+                    "borderRadius": "12px", "border": "none",
+                    "cursor": "pointer", "padding": "3px",
+                    "display": "flex", "alignItems": "center",
+                    "transition": "background-color 0.2s",
+                },
+            ),
+        ], style={"display": "flex", "alignItems": "center",
+                  "marginBottom": "0.75rem"}),
         html.Label("Cone Direction:",
            style={"marginBottom": "0.5rem", "display": "block",
                   "fontWeight": "500", "color": "#e2e8f0"}),
@@ -696,7 +722,7 @@ def make_layout() -> html.Div:
         [
             html.Div(
                 html.H2(
-                    "HIVE-C: Diagnosing Hyperbolic Projections via Entailment Cone",
+                    "HIVE-C: Diagnosing Hyperbolic Projections via Entailment Cones",
                     style={"color": "white", "margin": 0, "padding": "0.5rem 0"},
                 ),
                 style={
@@ -724,6 +750,7 @@ def make_layout() -> html.Div:
             dcc.Store(id="cone-data"),
             dcc.Store(id="cone-active-tab", data=0),
             dcc.Store(id="cone-multi-mode", data=False),
+            dcc.Store(id="show-512d", data=True),
             html.Div(
                 [_config_panel(), _centre_panel(), _cmp_panel()],
                 style={

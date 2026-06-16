@@ -364,25 +364,27 @@ def compute_inward_cone_wedge_path(
 def compute_cone_highlights_512d(
     anchor_idx: int,
     dataset_name: str,
-    direction: str = "outward",
     scale: float = 1.0,
-    band: float = 0.5,
-    ) -> dict:
+    band: float | None = None,
+) -> dict:
     """
-    Compute geometrically-correct cone membership in the ORIGINAL 512D
-    Lorentz space, then return indices to highlight on the 2D disk.
+    Compute cone membership in the ORIGINAL 512D Lorentz space.
+    Returns indices to highlight as purple rings on the 2D disk.
 
-    This is the key fix: the 2D projection degenerates (all apertures ~90),
-    so cone membership computed in 2D is meaningless. We compute it in 512D
-    where the geometry is intact, and highlight those same point indices on
-    the 2D plot.
+    The 2D projection degenerates (apertures ~90°), so cone membership
+    computed in 2D is unreliable. Computing in 512D gives the geometrically
+    correct answer, which we then map back to 2D point indices via the
+    aligned subset file.
 
-    Returns dict:
+    Returns:
         outward_512d : list[int]  indices inside 512D outward cone
         inward_512d  : list[int]  indices inside 512D inward cone
         n_total      : int        number of 512D points
     """
-    hd_embeddings, hd_labels = _load_hd_embeddings(dataset_name)
+    import torch
+    import src.lorentz as L
+
+    hd_embeddings, _ = _load_hd_embeddings(dataset_name)  # _ = labels unused
     hd_poincare = torch.tensor(hd_embeddings, dtype=torch.float32)
     hd_lorentz = L.poincare_to_lorentz(hd_poincare)
 
@@ -401,11 +403,11 @@ def compute_cone_highlights_512d(
 
     outward_512d = [i for i in torch.where(out_mask)[0].tolist()
                     if i != anchor_idx]
-    inward_512d = [i for i in torch.where(in_mask)[0].tolist()
-                   if i != anchor_idx]
+    inward_512d  = [i for i in torch.where(in_mask)[0].tolist()
+                    if i != anchor_idx]
 
     return {
         "outward_512d": outward_512d,
-        "inward_512d": inward_512d,
-        "n_total": n_total,
+        "inward_512d":  inward_512d,
+        "n_total":      n_total,
     }

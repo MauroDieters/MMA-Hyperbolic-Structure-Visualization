@@ -6,7 +6,37 @@ from .cone_utils import compute_cone_highlights_512d
 from .projection import _interpolate_hyperbolic
 
 from .image_utils import _encode_image, _create_content_element
+from .layout import (
+    COMPARE_PANEL_VISIBLE,
+    COMPARE_PANEL_HIDDEN,
+    PROJ_PANEL_IDS,
+    VIEW_BTN_ACTIVE,
+    VIEW_BTN_INACTIVE,
+)
 import json
+
+
+# Order in which the projection buttons / compare-panel styles are emitted by the
+# view callbacks. Note UMAP precedes TriMap (matches the existing Output order).
+PROJ_BTN_ORDER = ["horopca", "cosne", "umap", "trimap"]
+
+
+def _proj_btn_styles(active_keys):
+    """Style dicts for the four projection buttons, green when active.
+
+    Returns them in :data:`PROJ_BTN_ORDER` (horopca, cosne, umap, trimap).
+    """
+    base = {
+        "color": "white", "border": "none", "padding": "0.5rem 1rem",
+        "borderRadius": "6px", "cursor": "pointer", "width": "100%",
+        "minWidth": "0", "flex": "1 1 0", "boxSizing": "border-box",
+        "transition": "background-color 0.2s",
+    }
+    active = set(active_keys or [])
+    return [
+        {**base, "backgroundColor": "#28a745" if k in active else "#6c757d"}
+        for k in PROJ_BTN_ORDER
+    ]
 
 
 def _compute_hyperbolic_distances(point, all_points, curv=1.0):
@@ -250,8 +280,12 @@ def _create_interactive_scatter(x, y, labels, target_names, emb_labels, title, s
 
 
 #-------------------------------------------------------------------------------------
-def _create_full_interactive_scatter(x, y, labels, target_names, emb_labels, title, sel, neighbor_indices, tree_connections, interp_point, mode, points=None, meta=None):
-    """Create a full interactive scatter plot with all mode features for comparison views"""
+def _create_full_interactive_scatter(x, y, labels, target_names, emb_labels, title, sel, neighbor_indices, tree_connections, interp_point, mode, points=None, meta=None, draw_boundary=True):
+    """Create a full interactive scatter plot with all mode features for comparison views.
+
+    ``draw_boundary`` adds the Poincaré-disk boundary circle. Set it False for
+    Euclidean projections (e.g. UMAP), where a disk boundary is meaningless.
+    """
     # Define colors matching plotting_utils.py
     colors = {
         'parent_text':  '#e41a1c',   # red
@@ -481,14 +515,14 @@ def _create_full_interactive_scatter(x, y, labels, target_names, emb_labels, tit
         if hasattr(trace, 'x') and hasattr(trace, 'y') and len(trace.x) > 0 and len(trace.y) > 0:
             distances = np.sqrt(np.array(trace.x)**2 + np.array(trace.y)**2)
             max_distance = max(max_distance, np.max(distances))
-    
-    # Add boundary circle if we have data points
-    if max_distance > 0:
+
+    # Add boundary circle if we have data points (hyperbolic projections only)
+    if draw_boundary and max_distance > 0:
         circle_radius = 1.1 * max_distance
         theta = np.linspace(0, 2*np.pi, 100)
         circle_x = circle_radius * np.cos(theta)
         circle_y = circle_radius * np.sin(theta)
-        
+
         # Add circle trace (make sure it's first so it renders behind other traces)
         circle_trace = go.Scatter(
             x=circle_x,
@@ -1123,13 +1157,14 @@ def register_callbacks(app: dash.Dash) -> None:
                     distances = np.sqrt(np.array(trace.x)**2 + np.array(trace.y)**2)
                     max_distance = max(max_distance, np.max(distances))
             
-            # Add boundary circle if we have data points
-            if max_distance > 0:
+            # Add boundary circle if we have data points (hyperbolic projections
+            # only — UMAP is Euclidean, so a disk boundary is meaningless there).
+            if max_distance > 0 and proj != "umap":
                 circle_radius = 1.1 * max_distance
                 theta = np.linspace(0, 2*np.pi, 100)
                 circle_x = circle_radius * np.cos(theta)
                 circle_y = circle_radius * np.sin(theta)
-                
+
                 # Add circle trace (make sure it's first so it renders behind other traces)
                 circle_trace = go.Scatter(
                     x=circle_x,
@@ -1142,33 +1177,47 @@ def register_callbacks(app: dash.Dash) -> None:
                 traces.insert(0, circle_trace)
 
             fig = go.Figure(data=traces)
-            
+
             # Add arrow annotations for tree connections
             annotations = tree_arrow_annotations
-            
+
+            # UMAP is Euclidean: autoscale to the data and show real axes/grid.
+            # Hyperbolic projections keep the symmetric, axis-free disk framing.
+            if proj == "umap":
+                xaxis = dict(
+                    autorange=True, fixedrange=False,
+                    showgrid=True, gridcolor="#e9ecef",
+                    zeroline=True, zerolinecolor="#ced4da",
+                    showticklabels=True, showline=True, linecolor="#ced4da",
+                    scaleanchor="y", scaleratio=1,
+                )
+                yaxis = dict(
+                    autorange=True, fixedrange=False,
+                    showgrid=True, gridcolor="#e9ecef",
+                    zeroline=True, zerolinecolor="#ced4da",
+                    showticklabels=True, showline=True, linecolor="#ced4da",
+                    scaleratio=1,
+                )
+            else:
+                xaxis = dict(
+                    range=[-plot_range, plot_range],
+                    fixedrange=False, showgrid=False, zeroline=False,
+                    showticklabels=False, showline=False,
+                    scaleanchor="y", scaleratio=1,
+                )
+                yaxis = dict(
+                    range=[-plot_range, plot_range],
+                    fixedrange=False, showgrid=False, zeroline=False,
+                    showticklabels=False, showline=False,
+                    scaleanchor="x", scaleratio=1,
+                )
+
             fig.update_layout(
-                xaxis=dict(
-                    range=[-plot_range, plot_range],
-                    fixedrange=False,
-                    showgrid=False,
-                    zeroline=False,
-                    showticklabels=False,
-                    showline=False,
-                    scaleanchor="y",
-                    scaleratio=1,
-                ),
-                yaxis=dict(
-                    range=[-plot_range, plot_range],
-                    fixedrange=False,
-                    showgrid=False,
-                    zeroline=False,
-                    showticklabels=False,
-                    showline=False,
-                    scaleanchor="x",
-                    scaleratio=1,
-                ),
+                xaxis=xaxis,
+                yaxis=yaxis,
                 margin=dict(l=0, r=0, b=60, t=30),
-                uirevision="embedding",
+                # Per-projection so switching projection re-fits the view (autoscale).
+                uirevision=proj,
                 showlegend=True,
                 legend=dict(
                     orientation="h",
@@ -1360,11 +1409,14 @@ def register_callbacks(app: dash.Dash) -> None:
             Input("scatter-disk-4", "clickData"),
         ],
         State("comparison-mode", "data"),
+        State("view-mode", "data"),
         prevent_initial_call=True,
     )
-    def _auto_switch_projection_visual(click_disk_1, click_disk_2, click_disk_3, click_disk_4, comparison_mode):
+    def _auto_switch_projection_visual(click_disk_1, click_disk_2, click_disk_3, click_disk_4, comparison_mode, view_mode):
         ctx = callback_context
-        if not ctx.triggered or not comparison_mode:
+        # Only auto-switch the active projection from the 2x2 Grid view; in Dual
+        # view the projection buttons reflect the two-way selection instead.
+        if not ctx.triggered or not comparison_mode or view_mode != "grid":
             return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
 
         triggered_id = ctx.triggered_id
@@ -2670,57 +2722,61 @@ def register_callbacks(app: dash.Dash) -> None:
     
 ####################################################################################
     @app.callback(
+        Output("view-mode", "data"),
         Output("comparison-mode", "data"),
-        Output("compare-projections-btn", "style"),
-        Output("toggle-knob", "style"),
+        Output("view-single-btn", "style"),
+        Output("view-dual-btn", "style"),
+        Output("view-grid-btn", "style"),
         Output("single-plot-container", "style"),
-        Output("comparison-plot-container", "style"),
         Output("config-panel", "style"),
         Output("right-panel", "style"),
         Output("centre-panel", "style"),
         Output("exit-comparison-btn", "style"),
-        Input("compare-projections-btn", "n_clicks"),
+        Output("dual-view-hint", "style"),
+        Output("proj-horopca-btn", "style", allow_duplicate=True),
+        Output("proj-cosne-btn", "style", allow_duplicate=True),
+        Output("proj-umap-btn", "style", allow_duplicate=True),
+        Output("proj-trimap-btn", "style", allow_duplicate=True),
+        Input("view-single-btn", "n_clicks"),
+        Input("view-dual-btn", "n_clicks"),
+        Input("view-grid-btn", "n_clicks"),
         Input("exit-comparison-btn", "n_clicks"),
-        State("comparison-mode", "data"),
+        State("proj", "data"),
+        State("dual-selection", "data"),
         prevent_initial_call=True,
     )
-    def _toggle_comparison_mode(toggle_clicks, exit_clicks, current_mode):
-        new_mode = not current_mode
+    def _set_view_mode(single_clicks, dual_clicks, grid_clicks, exit_clicks, selected_proj, dual_selection):
+        ctx = callback_context
+        triggered_id = ctx.triggered_id if ctx.triggered else "view-single-btn"
+        view = {
+            "view-single-btn": "single",
+            "view-dual-btn": "dual",
+            "view-grid-btn": "grid",
+            "exit-comparison-btn": "single",
+        }.get(triggered_id, "single")
+
+        # Segmented-control highlight (active button green).
+        seg = {
+            "single": [{**VIEW_BTN_ACTIVE, "borderRadius": "6px 0 0 6px"},
+                       {**VIEW_BTN_INACTIVE, "borderRadius": "0"},
+                       {**VIEW_BTN_INACTIVE, "borderRadius": "0 6px 6px 0"}],
+            "dual": [{**VIEW_BTN_INACTIVE, "borderRadius": "6px 0 0 6px"},
+                     {**VIEW_BTN_ACTIVE, "borderRadius": "0"},
+                     {**VIEW_BTN_INACTIVE, "borderRadius": "0 6px 6px 0"}],
+            "grid": [{**VIEW_BTN_INACTIVE, "borderRadius": "6px 0 0 6px"},
+                     {**VIEW_BTN_INACTIVE, "borderRadius": "0"},
+                     {**VIEW_BTN_ACTIVE, "borderRadius": "0 6px 6px 0"}],
+        }[view]
 
         exit_btn_visible = {
-            "display": "inline-block",
-            "alignSelf": "flex-start",
-            "marginBottom": "0.5rem",
-            "backgroundColor": "#4a5568",
-            "color": "white",
-            "border": "none",
-            "padding": "0.5rem 1rem",
-            "borderRadius": "6px",
-            "cursor": "pointer",
-            "fontWeight": "600",
-            "transition": "background-color 0.2s",
+            "display": "inline-block", "alignSelf": "flex-start", "marginBottom": "0.5rem",
+            "backgroundColor": "#4a5568", "color": "white", "border": "none",
+            "padding": "0.5rem 1rem", "borderRadius": "6px", "cursor": "pointer",
+            "fontWeight": "600", "transition": "background-color 0.2s",
         }
         exit_btn_hidden = {**exit_btn_visible, "display": "none"}
 
-        track_on = {
-            "width": "44px", "height": "24px",
-            "backgroundColor": "#41ae76",    # green when on
-            "borderRadius": "12px", "border": "none",
-            "cursor": "pointer", "padding": "3px",
-            "display": "flex", "alignItems": "center",
-            "transition": "background-color 0.2s",
-        }
-        track_off = {**track_on, "backgroundColor": "#4a5568"}
-
-        knob_on = {
-            "width": "18px", "height": "18px",
-            "backgroundColor": "white", "borderRadius": "50%",
-            "transition": "transform 0.2s",
-            "transform": "translateX(20px)",    # slid right = ON
-        }
-        knob_off = {**knob_on, "transform": "translateX(0px)"}
-
-        # Normal (single-view) panel styles — mirror layout.py
+        # Panel styles — mirror layout.py.
         config_panel_normal = {
             "width": "20vw", "minWidth": "240px", "maxWidth": "300px",
             "padding": "1rem", "backgroundColor": "#2d3748", "borderRadius": "8px",
@@ -2739,45 +2795,78 @@ def register_callbacks(app: dash.Dash) -> None:
         }
         centre_panel_compare = {**centre_panel_normal, "width": "100%", "maxWidth": "100%"}
 
-        if new_mode:
-            # Compare-All: hide both side panels, give the 4 plots the full width
+        single_plot_visible = {
+            "display": "flex", "width": "min(85vh, 50vw)", "height": "min(85vh, 50vw)",
+            "aspectRatio": "1 / 1", "margin": "auto", "maxWidth": "100%",
+            "maxHeight": "100%", "flexShrink": 0, "flexGrow": 0,
+        }
+        single_plot_hidden = {"display": "none"}
+        dual_hint_visible = {"display": "block", "fontSize": "0.72rem",
+                             "color": "#a0aec0", "margin": "0 0 0.5rem 0"}
+        dual_hint_hidden = {**dual_hint_visible, "display": "none"}
+
+        if view == "single":
+            # Projection buttons highlight the single active projection.
+            proj_styles = _proj_btn_styles([selected_proj])
             return (
-                True,
-                track_on,
-                knob_on,
-                {"display": "none"},
-                {
-                    "display": "grid", "width": "100%", "height": "100%",
-                    "gridTemplateColumns": "1fr 1fr", "gridTemplateRows": "1fr 1fr",
-                    "gap": "0.5rem", "minHeight": "0",
-                },
-                {"display": "none"},
-                {"display": "none"},
-                centre_panel_compare,
-                exit_btn_visible,
+                "single", False, *seg,
+                single_plot_visible, config_panel_normal, right_panel_normal,
+                centre_panel_normal, exit_btn_hidden, dual_hint_hidden, *proj_styles,
             )
-        else:
+        elif view == "dual":
+            # Keep both side panels; projection buttons highlight the two chosen projections.
+            proj_styles = _proj_btn_styles(dual_selection)
             return (
-                False,
-                track_off,
-                knob_off,
-                {
-                    "display": "flex",
-                    "width": "min(85vh, 50vw)",
-                    "height": "min(85vh, 50vw)",
-                    "aspectRatio": "1 / 1",
-                    "margin": "auto",
-                    "maxWidth": "100%",
-                    "maxHeight": "100%",
-                    "flexShrink": 0,
-                    "flexGrow": 0,
-                },
-                {"display": "none"},
-                config_panel_normal,
-                right_panel_normal,
-                centre_panel_normal,
-                exit_btn_hidden,
+                "dual", True, *seg,
+                single_plot_hidden, config_panel_normal, right_panel_normal,
+                centre_panel_normal, exit_btn_visible, dual_hint_visible, *proj_styles,
             )
+        else:  # grid
+            # Hide both side panels, give the 4 plots the full width.
+            proj_styles = _proj_btn_styles([selected_proj])
+            return (
+                "grid", True, *seg,
+                single_plot_hidden, {"display": "none"}, {"display": "none"},
+                centre_panel_compare, exit_btn_visible, dual_hint_hidden, *proj_styles,
+            )
+
+#####################################################################################
+    @app.callback(
+        Output("comparison-plot-container", "style"),
+        Output("panel-horopca", "style"),
+        Output("panel-cosne", "style"),
+        Output("panel-umap", "style"),
+        Output("panel-trimap", "style"),
+        Input("view-mode", "data"),
+        Input("dual-selection", "data"),
+    )
+    def _render_compare_panels(view_mode, dual_selection):
+        """Lay out the compare panels: 2x2 for Grid, two side-by-side for Dual."""
+        panels_order = ["horopca", "cosne", "umap", "trimap"]
+
+        if view_mode == "grid":
+            container = {
+                "display": "grid", "width": "100%", "height": "100%",
+                "gridTemplateColumns": "1fr 1fr", "gridTemplateRows": "1fr 1fr",
+                "gap": "0.5rem", "minHeight": "0",
+            }
+            panel_styles = [COMPARE_PANEL_VISIBLE for _ in panels_order]
+        elif view_mode == "dual":
+            selected = set(dual_selection or [])
+            container = {
+                "display": "grid", "width": "100%", "height": "100%",
+                "gridTemplateColumns": "1fr 1fr", "gridTemplateRows": "1fr",
+                "gap": "0.5rem", "minHeight": "0",
+            }
+            panel_styles = [
+                COMPARE_PANEL_VISIBLE if k in selected else COMPARE_PANEL_HIDDEN
+                for k in panels_order
+            ]
+        else:  # single — container hidden entirely
+            container = {"display": "none"}
+            panel_styles = [COMPARE_PANEL_VISIBLE for _ in panels_order]
+
+        return (container, *panel_styles)
 
 #####################################################################################
     @app.callback(
@@ -3180,7 +3269,8 @@ def register_callbacks(app: dash.Dash) -> None:
                 tree_connections = []
 
         emb_labels = emb_data.get("labels", [])
-        return _create_full_interactive_scatter(dx, dy, labels, target_names, emb_labels, "", sel, neighbor_indices, tree_connections, interp_transformed, mode, points=points)
+        # UMAP is Euclidean — don't draw the Poincaré disk boundary around it.
+        return _create_full_interactive_scatter(dx, dy, labels, target_names, emb_labels, "", sel, neighbor_indices, tree_connections, interp_transformed, mode, points=points, draw_boundary=(proj_name != "umap"))
 
 #####################################################################################
     @app.callback(
@@ -3389,49 +3479,47 @@ def register_callbacks(app: dash.Dash) -> None:
         Output("proj-cosne-btn", "style"),
         Output("proj-umap-btn", "style"),
         Output("proj-trimap-btn", "style"),
+        Output("dual-selection", "data"),
         Input("proj-horopca-btn", "n_clicks"),
         Input("proj-cosne-btn", "n_clicks"),
         Input("proj-umap-btn", "n_clicks"),
         Input("proj-trimap-btn", "n_clicks"),
         State("proj", "data"),
+        State("view-mode", "data"),
+        State("dual-selection", "data"),
         prevent_initial_call=True,
     )
-    def _update_projection_selection(horopca_clicks, cosne_clicks, umap_clicks, trimap_clicks, current_proj):
+    def _update_projection_selection(horopca_clicks, cosne_clicks, umap_clicks, trimap_clicks,
+                                     current_proj, view_mode, dual_selection):
         ctx = callback_context
         if not ctx.triggered:
-            return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+            return (dash.no_update,) * 6
 
         triggered_id = ctx.triggered[0]["prop_id"].split(".")[0]
+        clicked = {
+            "proj-horopca-btn": "horopca",
+            "proj-cosne-btn": "cosne",
+            "proj-umap-btn": "umap",
+            "proj-trimap-btn": "trimap",
+        }.get(triggered_id)
+        if clicked is None:
+            return (dash.no_update,) * 6
 
-        # Button styles
-        active_style = {
-            "backgroundColor": "#28a745",
-            "color": "white",
-            "border": "none",
-            "padding": "0.5rem 1rem",
-            "borderRadius": "6px",
-            "cursor": "pointer",
-            "width": "100%",
-            "minWidth": "0",
-            "flex": "1 1 0",
-            "boxSizing": "border-box",
-            "transition": "background-color 0.2s",
-        }
-        inactive_style = {
-            **active_style,
-            "backgroundColor": "#6c757d"
-        }
+        if view_mode == "dual":
+            # Toggle the clicked projection in/out of the dual selection (max 2).
+            selection = list(dual_selection or [])
+            if clicked in selection:
+                selection.remove(clicked)
+            else:
+                selection.append(clicked)
+                selection = selection[-2:]  # keep the two most recent
+            styles = _proj_btn_styles(selection)
+            # Don't change the single-view projection while comparing.
+            return (dash.no_update, *styles, selection)
 
-        if triggered_id == "proj-horopca-btn":
-            return "horopca", active_style, inactive_style, inactive_style, inactive_style
-        elif triggered_id == "proj-cosne-btn":
-            return "cosne", inactive_style, active_style, inactive_style, inactive_style
-        elif triggered_id == "proj-umap-btn":
-            return "umap", inactive_style, inactive_style, active_style, inactive_style
-        elif triggered_id == "proj-trimap-btn":
-            return "trimap", inactive_style, inactive_style, inactive_style, active_style
-
-        return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+        # Single / Grid: pick the one active projection.
+        styles = _proj_btn_styles([clicked])
+        return (clicked, *styles, dash.no_update)
 
 #####################################################################################
     # Interpolation number input callbacks

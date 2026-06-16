@@ -1,8 +1,12 @@
 from dash import dcc, html
 
 
-def _compare_plot(title: str, graph_id: str, filename: str) -> html.Div:
-    """One projection panel inside the 2x2 Compare-All grid (fills its grid cell)."""
+def _compare_plot(title: str, graph_id: str, filename: str, panel_id: str | None = None) -> html.Div:
+    """One projection panel inside the Compare grid (fills its grid cell).
+
+    ``panel_id`` lets the view callbacks show/hide an individual panel, which is
+    how Dual view renders only the two selected projections.
+    """
     return html.Div([
         html.H5(title, style={"textAlign": "center", "margin": "0 0 0.4rem 0", "color": "#333", "fontSize": "0.9rem"}),
         dcc.Graph(
@@ -20,7 +24,38 @@ def _compare_plot(title: str, graph_id: str, filename: str) -> html.Div:
                 "modeBarButtons": [["pan2d", "zoom2d", "zoomIn2d", "zoomOut2d", "autoScale2d", "resetScale2d"], ["toImage"]],
             },
         ),
-    ], style={"display": "flex", "flexDirection": "column", "minWidth": "0", "minHeight": "0", "alignItems": "center", "overflow": "hidden"})
+    ], id=panel_id, style={"display": "flex", "flexDirection": "column", "minWidth": "0", "minHeight": "0", "alignItems": "center", "overflow": "hidden"})
+
+
+# Visible/hidden styles for a single compare panel — shared by layout and the
+# view callbacks so Dual view can toggle individual panels on and off.
+COMPARE_PANEL_VISIBLE = {
+    "display": "flex", "flexDirection": "column", "minWidth": "0",
+    "minHeight": "0", "alignItems": "center", "overflow": "hidden",
+}
+COMPARE_PANEL_HIDDEN = {**COMPARE_PANEL_VISIBLE, "display": "none"}
+
+# Maps a projection key to the compare panel / graph that renders it.
+PROJ_PANEL_IDS = {
+    "horopca": "panel-horopca",
+    "cosne": "panel-cosne",
+    "umap": "panel-umap",
+    "trimap": "panel-trimap",
+}
+
+# Segmented-control button styles for the Single / Dual / Grid view selector.
+VIEW_BTN_INACTIVE = {
+    "flex": "1 1 0",
+    "padding": "0.4rem 0",
+    "backgroundColor": "#4a5568",
+    "color": "#e2e8f0",
+    "border": "none",
+    "cursor": "pointer",
+    "fontSize": "0.8rem",
+    "fontWeight": "600",
+    "transition": "background-color 0.2s",
+}
+VIEW_BTN_ACTIVE = {**VIEW_BTN_INACTIVE, "backgroundColor": "#41ae76", "color": "white"}
 
 
 def _config_panel() -> html.Div:
@@ -111,54 +146,22 @@ def _config_panel() -> html.Div:
                         "transition": "background-color 0.2s",
                     },
                 ),
-            ], style={"display": "flex", "gap": "0.5rem", "marginBottom": "0.5rem"}),
-            # Projection comparison section
+            ], style={"display": "grid", "gridTemplateColumns": "1fr 1fr", "gap": "0.5rem", "marginBottom": "0.5rem"}),
+            # View selector: Single / Dual / Grid segmented control
             html.Div([
-                html.Div([
-    html.Span("Single View", style={
-        "fontSize": "0.78rem",
-        "color": "#a0aec0",
-        "marginRight": "0.6rem",
-        "fontWeight": "500",
-    }),
-    html.Button(
-        id="compare-projections-btn",
-        n_clicks=0,
-        children=[
-            html.Div(id="toggle-knob", style={
-                "width": "18px",
-                "height": "18px",
-                "backgroundColor": "white",
-                "borderRadius": "50%",
-                "transition": "transform 0.2s",
-                "transform": "translateX(0px)",
-            })
-        ],
-        style={
-            "width": "44px",
-            "height": "24px",
-            "backgroundColor": "#4a5568",
-            "borderRadius": "12px",
-            "border": "none",
-            "cursor": "pointer",
-            "padding": "3px",
-            "display": "flex",
-            "alignItems": "center",
-            "transition": "background-color 0.2s",
-        },
-    ),
-    html.Span("Grid View", style={
-        "fontSize": "0.78rem",
-        "color": "#a0aec0",
-        "marginLeft": "0.6rem",
-        "fontWeight": "500",
-    }),
-], style={
-    "display": "flex",
-    "alignItems": "center",
-    "marginBottom": "0.5rem",
-}),
-            ]),
+                html.Button("Single", id="view-single-btn", n_clicks=0,
+                            style={**VIEW_BTN_ACTIVE, "borderRadius": "6px 0 0 6px"}),
+                html.Button("Dual", id="view-dual-btn", n_clicks=0,
+                            style={**VIEW_BTN_INACTIVE, "borderRadius": "0"}),
+                html.Button("Grid", id="view-grid-btn", n_clicks=0,
+                            style={**VIEW_BTN_INACTIVE, "borderRadius": "0 6px 6px 0"}),
+            ], style={"display": "flex", "marginBottom": "0.35rem"}),
+            html.P(
+                id="dual-view-hint",
+                children="Dual view: click two projection buttons to compare.",
+                style={"display": "none", "fontSize": "0.72rem", "color": "#a0aec0",
+                       "margin": "0 0 0.5rem 0"},
+            ),
             dcc.Store(id="proj", data="horopca"),  # Hidden store for compatibility
             # Hyperparameters display
             html.Div(
@@ -589,10 +592,10 @@ def _centre_panel() -> html.Div:
             html.Div(
                 id="comparison-plot-container",
                 children=[
-                    _compare_plot("HoroPCA", "scatter-disk-1", "horopca_plot"),
-                    _compare_plot("CO-SNE",  "scatter-disk-2", "cosne_plot"),
-                    _compare_plot("TriMap",  "scatter-disk-4", "trimap_plot"),
-                    _compare_plot("UMAP",    "scatter-disk-3", "umap_plot"),
+                    _compare_plot("HoroPCA", "scatter-disk-1", "horopca_plot", panel_id="panel-horopca"),
+                    _compare_plot("CO-SNE",  "scatter-disk-2", "cosne_plot",   panel_id="panel-cosne"),
+                    _compare_plot("TriMap",  "scatter-disk-4", "trimap_plot",  panel_id="panel-trimap"),
+                    _compare_plot("UMAP",    "scatter-disk-3", "umap_plot",    panel_id="panel-umap"),
                 ],
                 style={
                     "display": "none",  # shown as a 2x2 grid by the toggle callback
@@ -758,7 +761,9 @@ def make_layout() -> html.Div:
             dcc.Store(id="sel", data=[]),
             dcc.Store(id="mode", data="compare"),
             dcc.Store(id="interpolated-point"),
-            dcc.Store(id="comparison-mode", data=False),
+            dcc.Store(id="comparison-mode", data=False),  # True for both Dual and Grid views
+            dcc.Store(id="view-mode", data="single"),  # "single" | "dual" | "grid"
+            dcc.Store(id="dual-selection", data=["horopca", "cosne"]),  # projections shown in Dual view
             dcc.Store(id="brush-dummy"),  # sink for the cross-projection brushing clientside callback
             dcc.Store(id="cone-direction", data="outward"),
             dcc.Store(id="cone-data"),

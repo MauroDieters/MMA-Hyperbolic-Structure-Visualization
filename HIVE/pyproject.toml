@@ -88,6 +88,7 @@ dependencies = [
     "threadpoolctl==3.6.0",
     "torch==2.7.1",
     "torchvision==0.22.1",
+    "trimap",
     "tornado==6.5.1",
     "tqdm==4.67.1",
     "traitlets==5.14.3",

@@ -57,8 +57,8 @@ def parse_arguments():
     parser.add_argument("--plot", action="store_true", help="Generate and save plots")
     
     # Method selection
-    parser.add_argument("--methods", nargs="+", default=["horopca", "cosne"], 
-                       choices=["horopca", "cosne"], help="Methods to run")
+    parser.add_argument("--methods", nargs="+", default=["horopca", "cosne"],
+                       choices=["horopca", "cosne", "umap", "trimap"], help="Methods to run")
     
     # HoroPCA args
     parser.add_argument("--horopca-components", type=int, default=2, help="HoroPCA components")
@@ -75,6 +75,18 @@ def parse_arguments():
     parser.add_argument("--cosne-exaggeration", type=float, default=12.0, help="CO-SNE early exaggeration")
     parser.add_argument("--cosne-gamma", type=float, default=0.1, help="CO-SNE student-t gamma")
     
+    # UMAP args
+    parser.add_argument("--umap-n-neighbors", type=int, default=15, help="UMAP number of neighbors")
+    parser.add_argument("--umap-min-dist", type=float, default=0.1, help="UMAP minimum distance")
+    parser.add_argument("--umap-metric", type=str, default="euclidean", help="UMAP distance metric")
+
+    # TriMap args (fully hyperbolic TriMap)
+    parser.add_argument("--trimap-n-inliers", type=int, default=10, help="TriMap: nearest hyperbolic neighbours per point")
+    parser.add_argument("--trimap-n-outliers", type=int, default=5, help="TriMap: outlier neighbours per point")
+    parser.add_argument("--trimap-n-random", type=int, default=5, help="TriMap: random triplets per point")
+    parser.add_argument("--trimap-n-iters", type=int, default=400, help="TriMap: Riemannian SGD iterations")
+    parser.add_argument("--trimap-lr", type=float, default=0.1, help="TriMap: Riemannian SGD learning rate")
+
     return parser.parse_args()
 
 
@@ -252,8 +264,124 @@ class ProjectionMethods:
         print(f"✓ HoroPCA complete: {embeddings.shape} → {reduced.shape}")
         
         return reduced
-    
-    def apply_cosne(self, embeddings, lr=0.5, lr_h=0.01, perplexity=30, 
+    def apply_umap(self, embeddings, n_neighbors=15, min_dist=0.1, metric="euclidean", seed=42):
+        """Apply UMAP reduction to plain Euclidean 2D coordinates."""
+        print("Applying UMAP...")
+        import umap as umap_lib
+        np.random.seed(seed)
+        embeddings_np = embeddings.numpy() if torch.is_tensor(embeddings) else np.array(embeddings)
+
+        reducer = umap_lib.UMAP(
+            n_components=2,
+            n_neighbors=n_neighbors,
+            min_dist=min_dist,
+            metric=metric,
+            random_state=seed,
+        )
+        coords_2d = reducer.fit_transform(embeddings_np)
+
+        print(f"✓ UMAP complete: {embeddings_np.shape} → {coords_2d.shape}")
+        return torch.tensor(coords_2d, dtype=torch.float32)
+
+    def apply_trimap(self, embeddings, n_inliers=10, n_outliers=5, n_random=5,
+                     n_iters=400, lr=0.1, seed=42):
+        """Fully hyperbolic TriMap: triplet loss optimised on the Poincaré ball.
+
+        Unlike vanilla TriMap (Euclidean output), this implements TriMap's triplet
+        objective with hyperbolic geometry on both sides:
+
+          * Triplets (i, j, k) with d(i,j) < d(i,k) are mined from true Lorentz
+            hyperbolic distances in the input:
+                d(x,y) = arccosh(-<x,y>_L),  <x,y>_L = x_s·y_s - x_t·y_t
+          * The 2D embedding is optimised with Riemannian gradient descent on the
+            Poincaré ball, using a hyperbolic student-t similarity
+                s_ij = 1 / (1 + d_P(y_i, y_j)^2)
+            where d_P is the Poincaré-disk distance.
+
+        Because the optimisation lives on the ball (||y|| < 1 enforced via a
+        retraction each step), the output sits inside the Poincaré disk with a
+        geometrically meaningful boundary — directly comparable to HoroPCA / CO-SNE.
+        """
+        print("Applying hyperbolic TriMap (Riemannian SGD on the Poincaré ball)...")
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+        rng = np.random.default_rng(seed)
+
+        x = embeddings.double()
+        n = x.shape[0]
+
+        # --- 1. High-dim hyperbolic distance matrix (Lorentz model, c=1) ---
+        x_time = torch.sqrt(1.0 + (x ** 2).sum(-1))               # (N,)
+        inner = x @ x.T - x_time[:, None] * x_time[None, :]       # <x,y>_L
+        inner = torch.clamp(inner, max=-1.0 - 1e-7)
+        d_high = torch.acosh(-inner)                              # (N, N)
+        d_high.fill_diagonal_(0.0)
+        d_np = d_high.numpy()
+        print(f"  Hyperbolic distance matrix: {n}×{n}, "
+              f"range [{d_np.min():.3f}, {d_np.max():.3f}]")
+
+        # --- 2. Mine triplets (i, j, k) with d(i,j) < d(i,k) from hyperbolic kNN ---
+        order = np.argsort(d_np, axis=1)        # nearest-first; column 0 is self
+        ti, tj, tk, tw = [], [], [], []
+        for i in range(n):
+            nbrs = order[i, 1:]                  # exclude self
+            inliers = nbrs[:n_inliers]
+            far_pool = nbrs[n // 2:]             # far half as outlier candidates
+            for j in inliers:
+                outliers = rng.choice(far_pool, size=min(n_outliers, len(far_pool)), replace=False)
+                for k in outliers:
+                    ti.append(i); tj.append(int(j)); tk.append(int(k))
+                    tw.append(d_np[i, k] - d_np[i, j])
+            for _ in range(n_random):            # random triplets for global structure
+                a, b = rng.choice(nbrs, size=2, replace=False)
+                if d_np[i, a] > d_np[i, b]:
+                    a, b = b, a
+                ti.append(i); tj.append(int(a)); tk.append(int(b))
+                tw.append(d_np[i, b] - d_np[i, a])
+
+        ti = torch.tensor(ti, dtype=torch.long)
+        tj = torch.tensor(tj, dtype=torch.long)
+        tk = torch.tensor(tk, dtype=torch.long)
+        w = torch.clamp(torch.tensor(tw, dtype=torch.float64), min=0.0)
+        if w.max() > 0:
+            w = w / w.max()                      # normalise weights to [0, 1]
+        print(f"  Mined {len(ti):,} hyperbolic triplets")
+
+        # --- 3. Initialise on the Poincaré ball, near the origin ---
+        y = (torch.randn(n, 2, dtype=torch.float64) * 1e-4).requires_grad_(True)
+        max_norm = 1.0 - 1e-5
+
+        def poincare_dist_sq(u, v):
+            diff = ((u - v) ** 2).sum(-1)
+            nu = (u ** 2).sum(-1)
+            nv = (v ** 2).sum(-1)
+            arg = 1.0 + 2.0 * diff / ((1.0 - nu) * (1.0 - nv) + 1e-9)
+            d = torch.acosh(torch.clamp(arg, min=1.0 + 1e-7))
+            return d ** 2
+
+        # --- 4. Riemannian gradient descent ---
+        for it in range(n_iters):
+            s_ij = 1.0 / (1.0 + poincare_dist_sq(y[ti], y[tj]))
+            s_ik = 1.0 / (1.0 + poincare_dist_sq(y[ti], y[tk]))
+            loss = (w * s_ik / (s_ij + s_ik)).sum()
+            loss.backward()
+            with torch.no_grad():
+                norm_sq = (y ** 2).sum(-1, keepdim=True)
+                scale = ((1.0 - norm_sq) ** 2) / 4.0     # inverse Poincaré metric
+                y -= lr * scale * y.grad
+                norm = y.norm(dim=-1, keepdim=True)      # retract into the ball
+                too_big = (norm > max_norm).squeeze(-1)
+                if too_big.any():
+                    y[too_big] = y[too_big] / norm[too_big] * max_norm
+                y.grad.zero_()
+            if (it + 1) % 100 == 0:
+                print(f"  Iteration {it + 1:4d}/{n_iters}, Loss: {loss.item():.4f}")
+
+        reduced = y.detach().float()
+        print(f"✓ Hyperbolic TriMap complete: {tuple(embeddings.shape)} → {tuple(reduced.shape)}")
+        return reduced
+
+    def apply_cosne(self, embeddings, lr=0.5, lr_h=0.01, perplexity=30,
                    exaggeration=12.0, gamma=0.1, seed=42):
         """Apply CO-SNE reduction."""
         print("Applying CO-SNE...")
@@ -403,7 +531,57 @@ def main():
             print("  📈 Generating CO-SNE plot...")
             cosne_plot_path = Path(args.dataset_path) / "cosne_plot.png"
             plot_poincare_disk(cosne_result, labels, save_path=str(cosne_plot_path))
-    
+    if "umap" in args.methods:
+        umap_result = projector.apply_umap(
+            embeddings, args.umap_n_neighbors, args.umap_min_dist, args.umap_metric, args.seed
+        )
+
+        umap_data = {
+            'embeddings': umap_result.numpy(),
+            'labels': labels,
+            'method': 'UMAP',
+            'parameters': {
+                'n_neighbors': args.umap_n_neighbors,
+                'min_dist': args.umap_min_dist,
+                'metric': args.umap_metric,
+            }
+        }
+
+        umap_path = Path(args.dataset_path) / "umap_embeddings.pkl"
+        with open(umap_path, 'wb') as f:
+            pickle.dump(umap_data, f)
+        print(f"✓ Saved UMAP embeddings: {umap_path}")
+
+    if "trimap" in args.methods:
+        trimap_result = projector.apply_trimap(
+            embeddings, args.trimap_n_inliers, args.trimap_n_outliers,
+            args.trimap_n_random, args.trimap_n_iters, args.trimap_lr, args.seed
+        )
+
+        trimap_data = {
+            'embeddings': trimap_result.numpy(),
+            'labels': labels,
+            'method': 'Hyperbolic TriMap',
+            'parameters': {
+                'n_inliers': args.trimap_n_inliers,
+                'n_outliers': args.trimap_n_outliers,
+                'n_random': args.trimap_n_random,
+                'n_iters': args.trimap_n_iters,
+                'lr': args.trimap_lr,
+                'distance': 'Lorentz hyperbolic input; Poincaré-ball Riemannian SGD',
+            }
+        }
+
+        trimap_path = Path(args.dataset_path) / "trimap_embeddings.pkl"
+        with open(trimap_path, 'wb') as f:
+            pickle.dump(trimap_data, f)
+        print(f"✓ Saved TriMap embeddings: {trimap_path}")
+
+        if args.plot:
+            print("  📈 Generating TriMap plot...")
+            trimap_plot_path = Path(args.dataset_path) / "trimap_plot.png"
+            plot_poincare_disk(trimap_result, labels, save_path=str(trimap_plot_path))
+
     print(f"\n✅ Projections complete! Results saved to: {args.dataset_path}")
     print("="*60)
 

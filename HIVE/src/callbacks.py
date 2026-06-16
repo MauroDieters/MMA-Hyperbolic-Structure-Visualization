@@ -500,8 +500,23 @@ def _create_full_interactive_scatter(x, y, labels, target_names, emb_labels, tit
         )
         traces.insert(0, circle_trace)
 
+    # Cross-projection brushing target: an empty trace the clientside hover
+    # callback fills in to mark the hovered item in every panel. Identified by
+    # meta="brush" so the JS can find it regardless of trace order.
+    traces.append(
+        go.Scatter(
+            x=[], y=[],
+            mode="markers",
+            marker=dict(size=18, color="#ff00ff", symbol="circle-open", line=dict(width=4, color="#ff00ff")),
+            meta="brush",
+            name="Linked point",
+            showlegend=False,
+            hoverinfo="skip",
+        )
+    )
+
     fig = go.Figure(data=traces)
-    
+
     # Add arrow annotations for tree connections (same as single view)
     annotations = tree_arrow_annotations
     
@@ -1312,25 +1327,28 @@ def register_callbacks(app: dash.Dash) -> None:
         return fig_disk
 
 #####################################################################################
-    # Auto-switch projection method when clicking in dual view 
     @app.callback(
         Output("proj", "data", allow_duplicate=True),
         Output("proj-horopca-btn", "style", allow_duplicate=True),
         Output("proj-cosne-btn", "style", allow_duplicate=True),
+        Output("proj-umap-btn", "style", allow_duplicate=True),
+        Output("proj-trimap-btn", "style", allow_duplicate=True),
         [
             Input("scatter-disk-1", "clickData"),
             Input("scatter-disk-2", "clickData"),
+            Input("scatter-disk-3", "clickData"),
+            Input("scatter-disk-4", "clickData"),
         ],
         State("comparison-mode", "data"),
         prevent_initial_call=True,
     )
-    def _auto_switch_projection_visual(click_disk_1, click_disk_2, comparison_mode):
+    def _auto_switch_projection_visual(click_disk_1, click_disk_2, click_disk_3, click_disk_4, comparison_mode):
         ctx = callback_context
         if not ctx.triggered or not comparison_mode:
-            return dash.no_update, dash.no_update, dash.no_update
-        
+            return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+
         triggered_id = ctx.triggered_id
-        
+
         # Button styles
         active_style = {
             "backgroundColor": "#28a745",
@@ -1349,15 +1367,21 @@ def register_callbacks(app: dash.Dash) -> None:
             **active_style,
             "backgroundColor": "#6c757d"
         }
-        
+
         if triggered_id == "scatter-disk-1":
-            # Clicked on HoroPCA plot (left) - switch to HoroPCA
-            return "horopca", active_style, inactive_style
+            # Clicked on HoroPCA plot - switch to HoroPCA
+            return "horopca", active_style, inactive_style, inactive_style, inactive_style
         elif triggered_id == "scatter-disk-2":
-            # Clicked on CO-SNE plot (right) - switch to CO-SNE
-            return "cosne", inactive_style, active_style
-        
-        return dash.no_update, dash.no_update, dash.no_update
+            # Clicked on CO-SNE plot - switch to CO-SNE
+            return "cosne", inactive_style, active_style, inactive_style, inactive_style
+        elif triggered_id == "scatter-disk-3":
+            # Clicked on UMAP plot - switch to UMAP
+            return "umap", inactive_style, inactive_style, active_style, inactive_style
+        elif triggered_id == "scatter-disk-4":
+            # Clicked on TriMap plot - switch to TriMap
+            return "trimap", inactive_style, inactive_style, inactive_style, active_style
+
+        return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
     
 #####################################################################################
     @app.callback(
@@ -1366,6 +1390,8 @@ def register_callbacks(app: dash.Dash) -> None:
             Input("scatter-disk", "clickData"),
             Input("scatter-disk-1", "clickData"),
             Input("scatter-disk-2", "clickData"),
+            Input("scatter-disk-3", "clickData"),
+            Input("scatter-disk-4", "clickData"),
             Input({"type": "close-button", "index": dash.ALL}, "n_clicks")
         ],
         State("sel", "data"),
@@ -1374,7 +1400,7 @@ def register_callbacks(app: dash.Dash) -> None:
         State("cone-multi-mode", "data"),
         prevent_initial_call=True,
     )
-    def _select(click_disk, click_disk_1, click_disk_2, close_clicks, sel, mode, traversal_path, cone_multi_mode):
+    def _select(click_disk, click_disk_1, click_disk_2, click_disk_3, click_disk_4, close_clicks, sel, mode, traversal_path, cone_multi_mode):
         ctx = callback_context
         if not ctx.triggered or not ctx.triggered_id:
             return dash.no_update
@@ -1398,18 +1424,13 @@ def register_callbacks(app: dash.Dash) -> None:
             except (TypeError, KeyError, IndexError):
                 return None
         
-        if triggered_id in ["scatter-disk", "scatter-disk-1", "scatter-disk-2"]:
+        if triggered_id in ["scatter-disk", "scatter-disk-1", "scatter-disk-2", "scatter-disk-3", "scatter-disk-4"]:
             # In interpolate mode, prevent new selections if there's already a traversal path
             if mode == "interpolate" and traversal_path is not None and len(traversal_path) > 0:
                 return dash.no_update
-            
+
             # Handle clicks from any of the scatter plots
-            if triggered_id == "scatter-disk":
-                click_data = ctx.inputs["scatter-disk.clickData"]
-            elif triggered_id == "scatter-disk-1":
-                click_data = ctx.inputs["scatter-disk-1.clickData"]
-            else:  # scatter-disk-2
-                click_data = ctx.inputs["scatter-disk-2.clickData"]
+            click_data = ctx.inputs[f"{triggered_id}.clickData"]
             
             idx = _clicked(click_data)
             if idx is None:
@@ -2307,6 +2328,23 @@ def register_callbacks(app: dash.Dash) -> None:
         dy = yh / (1.0 + zh)
         coords_2d = np.stack([dx, dy], axis=1)
 
+        umap_warning = None
+        if proj == "umap":
+            umap_warning = html.Div(
+                "⚠️ UMAP is Euclidean — cone wedges are shown for reference only and "
+                "don't carry hyperbolic meaning. The 512D highlights (purple rings) "
+                "are still geometrically valid.",
+                style={
+                    "backgroundColor": "#fff3cd",
+                    "border": "1px solid #ffc107",
+                    "borderRadius": "4px",
+                    "padding": "0.4rem 0.6rem",
+                    "fontSize": "0.75rem",
+                    "color": "#856404",
+                    "marginBottom": "0.5rem",
+                }
+            )
+
         from .cone_utils import compute_cone_data
 
         type_colors = {
@@ -2377,6 +2415,7 @@ def register_callbacks(app: dash.Dash) -> None:
             gt_in_outward = gt_children_union & outward_intersection
 
             return html.Div([
+                umap_warning,
                 html.H6("∩ Cone Intersection",
                         style={"margin": "0 0 0.5rem 0",
                                "color": "#2c3e50"}),
@@ -2459,6 +2498,7 @@ def register_callbacks(app: dash.Dash) -> None:
         )
 
         return html.Div([
+            umap_warning,
             # Point info
             html.Div([
                 html.Div(style={
@@ -2560,15 +2600,32 @@ def register_callbacks(app: dash.Dash) -> None:
         Output("toggle-knob", "style"),
         Output("single-plot-container", "style"),
         Output("comparison-plot-container", "style"),
+        Output("config-panel", "style"),
+        Output("right-panel", "style"),
+        Output("centre-panel", "style"),
+        Output("exit-comparison-btn", "style"),
         Input("compare-projections-btn", "n_clicks"),
+        Input("exit-comparison-btn", "n_clicks"),
         State("comparison-mode", "data"),
         prevent_initial_call=True,
     )
-    def _toggle_comparison_mode(n_clicks, current_mode):
-        if not n_clicks:
-            return dash.no_update
-
+    def _toggle_comparison_mode(toggle_clicks, exit_clicks, current_mode):
         new_mode = not current_mode
+
+        exit_btn_visible = {
+            "display": "inline-block",
+            "alignSelf": "flex-start",
+            "marginBottom": "0.5rem",
+            "backgroundColor": "#4a5568",
+            "color": "white",
+            "border": "none",
+            "padding": "0.5rem 1rem",
+            "borderRadius": "6px",
+            "cursor": "pointer",
+            "fontWeight": "600",
+            "transition": "background-color 0.2s",
+        }
+        exit_btn_hidden = {**exit_btn_visible, "display": "none"}
 
         track_on = {
             "width": "44px", "height": "24px",
@@ -2588,13 +2645,41 @@ def register_callbacks(app: dash.Dash) -> None:
         }
         knob_off = {**knob_on, "transform": "translateX(0px)"}
 
+        # Normal (single-view) panel styles — mirror layout.py
+        config_panel_normal = {
+            "width": "20vw", "minWidth": "240px", "maxWidth": "300px",
+            "padding": "1rem", "backgroundColor": "#2d3748", "borderRadius": "8px",
+            "boxShadow": "0 1px 3px rgba(0,0,0,0.1)", "flexShrink": 0, "overflowY": "auto",
+        }
+        right_panel_normal = {
+            "width": "18vw", "minWidth": "300px", "maxWidth": "350px",
+            "padding": "1rem", "backgroundColor": "white", "borderRadius": "8px",
+            "boxShadow": "0 1px 3px rgba(0,0,0,0.1)", "flexShrink": 0, "overflowY": "auto",
+        }
+        centre_panel_normal = {
+            "flex": 1, "width": "60vw", "padding": "1rem", "backgroundColor": "white",
+            "borderRadius": "8px", "boxShadow": "0 1px 3px rgba(0,0,0,0.1)",
+            "display": "flex", "flexDirection": "column", "justifyContent": "center",
+            "alignItems": "center", "minHeight": 0, "overflow": "visible",
+        }
+        centre_panel_compare = {**centre_panel_normal, "width": "100%", "maxWidth": "100%"}
+
         if new_mode:
+            # Compare-All: hide both side panels, give the 4 plots the full width
             return (
                 True,
                 track_on,
                 knob_on,
                 {"display": "none"},
-                {"display": "flex"},
+                {
+                    "display": "grid", "width": "100%", "height": "100%",
+                    "gridTemplateColumns": "1fr 1fr", "gridTemplateRows": "1fr 1fr",
+                    "gap": "0.5rem", "minHeight": "0",
+                },
+                {"display": "none"},
+                {"display": "none"},
+                centre_panel_compare,
+                exit_btn_visible,
             )
         else:
             return (
@@ -2613,6 +2698,10 @@ def register_callbacks(app: dash.Dash) -> None:
                     "flexGrow": 0,
                 },
                 {"display": "none"},
+                config_panel_normal,
+                right_panel_normal,
+                centre_panel_normal,
+                exit_btn_hidden,
             )
 
 #####################################################################################
@@ -2922,11 +3011,202 @@ def register_callbacks(app: dash.Dash) -> None:
         
         # Load the original label types for color coding (always HoroPCA for left plot)
         emb_labels = emb_data.get("labels", [])
-        
+
         # Create the figure with all mode features
         fig = _create_full_interactive_scatter(dx, dy, labels, target_names, emb_labels, "", sel, neighbor_indices, tree_connections, interp_transformed, mode, points=points)
         return fig
 
+#####################################################################################
+    def _build_compare_scatter(proj_name, dataset_name, sel, mode, k_neighbors,
+                               traversal_path, labels_data, target_names, data_store, points):
+        """Shared loader/renderer for an extra projection panel in Compare-All view.
+
+        Mirrors _scatter_plot_1/_scatter_plot_2 but loads {proj_name}_embeddings.pkl,
+        so it works for UMAP (scatter-disk-3) and hyperbolic TriMap (scatter-disk-4).
+        Returns {} (empty figure) if the projection file is missing.
+        """
+        if labels_data is None or not dataset_name:
+            return {}
+        try:
+            import pickle
+            dataset_dir = {"imagenet": "ImageNet", "grit": "GRIT"}.get(dataset_name, dataset_name)
+            emb_file = f"hierchical_datasets/{dataset_dir}/{proj_name}_embeddings.pkl"
+            with open(emb_file, "rb") as f_emb:
+                emb_data = pickle.load(f_emb)
+            emb = np.array(emb_data["embeddings"], dtype=np.float32)
+        except Exception as e:
+            print(f"Error loading {proj_name} embeddings: {e}")
+            return {}
+
+        labels = np.asarray(labels_data, dtype=int)
+        sel = sel or []
+
+        # Interpolated path holds dataset indices → look up this projection's coords
+        interp_point = None
+        if traversal_path is not None and isinstance(traversal_path, list):
+            interp_coords = [emb[idx] for idx in traversal_path if idx < len(emb)]
+            if interp_coords:
+                interp_point = np.array(interp_coords)
+
+        # 2D inputs pass through unchanged; 3D Lorentz coords → Poincaré
+        xh, yh = emb[:, 0], emb[:, 1]
+        zh = emb[:, 2] if emb.shape[1] > 2 else np.zeros(emb.shape[0])
+        dx, dy = xh / (1.0 + zh), yh / (1.0 + zh)
+
+        interp_transformed = None
+        if interp_point is not None:
+            if interp_point.ndim == 2 and interp_point.shape[0] > 1:
+                coords = []
+                for pt in interp_point:
+                    if len(pt) > 2:
+                        coords.append([pt[0] / (1.0 + pt[2]), pt[1] / (1.0 + pt[2])])
+                    else:
+                        coords.append([pt[0], pt[1]])
+                interp_transformed = np.array(coords)
+            else:
+                pt = interp_point if interp_point.ndim == 1 else interp_point[0]
+                if len(pt) > 2:
+                    interp_transformed = np.array([pt[0] / (1.0 + pt[2]), pt[1] / (1.0 + pt[2])])
+                else:
+                    interp_transformed = np.array([pt[0], pt[1]])
+
+        neighbor_indices = []
+        tree_connections = []
+        if mode == "neighbors" and sel and len(sel) == 1:
+            if data_store is not None:
+                data_np = np.asarray(data_store, dtype=np.float32)
+                dists = _compute_hyperbolic_distances(data_np[sel[0]], data_np)
+                neighbor_indices = np.argsort(dists)
+                neighbor_indices = neighbor_indices[neighbor_indices != sel[0]][:k_neighbors]
+        elif mode == "tree" and sel and len(sel) == 1:
+            try:
+                selected_tree_id = points[sel[0]].get("tree_id", "?")
+                tree_point_indices = []
+                tree_points_by_type = {}
+                for i, pt in enumerate(points):
+                    if pt.get("tree_id") == selected_tree_id:
+                        tree_point_indices.append(i)
+                        emb_type = pt.get("embedding_type", "unknown")
+                        tree_points_by_type.setdefault(emb_type, []).append(i)
+                if dataset_name == "imagenet":
+                    level_order = ['parent_text', 'child_text', 'child_image']
+                else:
+                    level_order = ['parent_text', 'child_text', 'parent_image', 'child_image']
+                for i in range(len(level_order) - 1):
+                    cur, nxt = level_order[i], level_order[i + 1]
+                    if cur in tree_points_by_type and nxt in tree_points_by_type:
+                        for c in tree_points_by_type[cur]:
+                            for nb in tree_points_by_type[nxt]:
+                                tree_connections.append((c, nb))
+                neighbor_indices = tree_point_indices
+            except Exception as e:
+                print(f"Error finding tree points: {e}")
+                neighbor_indices = []
+                tree_connections = []
+
+        emb_labels = emb_data.get("labels", [])
+        return _create_full_interactive_scatter(dx, dy, labels, target_names, emb_labels, "", sel, neighbor_indices, tree_connections, interp_transformed, mode, points=points)
+
+#####################################################################################
+    @app.callback(
+        Output("scatter-disk-3", "figure"),
+        Input("dataset-dropdown", "value"),
+        Input("sel", "data"),
+        Input("mode", "data"),
+        Input("neighbors-slider", "value"),
+        Input("interpolated-point", "data"),
+        State("labels-store", "data"),
+        State("target-names-store", "data"),
+        State("data-store", "data"),
+        State("points-store", "data"),
+        Input("comparison-mode", "data"),
+    )
+    def _scatter_plot_3(dataset_name, sel, mode, k_neighbors, traversal_path, labels_data, target_names, data_store, points, comparison_mode):
+        if not comparison_mode:
+            return {}
+        return _build_compare_scatter("umap", dataset_name, sel, mode, k_neighbors, traversal_path, labels_data, target_names, data_store, points)
+
+#####################################################################################
+    @app.callback(
+        Output("scatter-disk-4", "figure"),
+        Input("dataset-dropdown", "value"),
+        Input("sel", "data"),
+        Input("mode", "data"),
+        Input("neighbors-slider", "value"),
+        Input("interpolated-point", "data"),
+        State("labels-store", "data"),
+        State("target-names-store", "data"),
+        State("data-store", "data"),
+        State("points-store", "data"),
+        Input("comparison-mode", "data"),
+    )
+    def _scatter_plot_4(dataset_name, sel, mode, k_neighbors, traversal_path, labels_data, target_names, data_store, points, comparison_mode):
+        if not comparison_mode:
+            return {}
+        return _build_compare_scatter("trimap", dataset_name, sel, mode, k_neighbors, traversal_path, labels_data, target_names, data_store, points)
+
+#####################################################################################
+    # ── Cross-projection brushing ───────────────────────────────────────────────
+    # When the cursor hovers a point in any Grid-View panel, mark that SAME item
+    # (matched by its original dataset index, stored in each point's customdata)
+    # in all four panels. Runs entirely in the browser via Plotly.restyle on a
+    # dedicated meta="brush" trace, so there is no server round-trip per hover.
+    app.clientside_callback(
+        """
+        function(h1, h2, h3, h4) {
+            const ids = ["scatter-disk-1", "scatter-disk-2", "scatter-disk-3", "scatter-disk-4"];
+            const hovers = [h1, h2, h3, h4];
+
+            // Original dataset index of the hovered point (null = nothing hovered).
+            let idx = null;
+            for (const h of hovers) {
+                if (h && h.points && h.points.length) {
+                    const cd = h.points[0].customdata;
+                    if (cd !== undefined && cd !== null) { idx = cd; break; }
+                }
+            }
+
+            const getGD = function(id) {
+                const el = document.getElementById(id);
+                if (!el) return null;
+                if (el.data) return el;                       // element is the plotly graph div
+                return el.querySelector(".js-plotly-plot");   // ...or it wraps one
+            };
+
+            for (const id of ids) {
+                const gd = getGD(id);
+                if (!gd || !gd.data) continue;
+
+                // Locate this panel's brush trace.
+                let bi = -1;
+                for (let t = 0; t < gd.data.length; t++) {
+                    if (gd.data[t].meta === "brush") { bi = t; break; }
+                }
+                if (bi < 0) continue;
+
+                // Find where the hovered index sits in this panel's coordinates.
+                let bx = [], by = [];
+                if (idx !== null) {
+                    for (let t = 0; t < gd.data.length && bx.length === 0; t++) {
+                        const tr = gd.data[t];
+                        if (t === bi || !tr.customdata) continue;
+                        for (let p = 0; p < tr.customdata.length; p++) {
+                            if (tr.customdata[p] === idx) { bx = [tr.x[p]]; by = [tr.y[p]]; break; }
+                        }
+                    }
+                }
+                window.Plotly.restyle(gd, {x: [bx], y: [by]}, [bi]);
+            }
+            return window.dash_clientside.no_update;
+        }
+        """,
+        Output("brush-dummy", "data"),
+        Input("scatter-disk-1", "hoverData"),
+        Input("scatter-disk-2", "hoverData"),
+        Input("scatter-disk-3", "hoverData"),
+        Input("scatter-disk-4", "hoverData"),
+        prevent_initial_call=True,
+    )
 
 #####################################################################################
     @app.callback(
@@ -2953,6 +3233,22 @@ def register_callbacks(app: dash.Dash) -> None:
                 {"param": "Perplexity", "value": "30", "description": "Local neighborhood size"},
                 {"param": "Exaggeration", "value": "12.0", "description": "Early exaggeration factor"},
                 {"param": "Gamma", "value": "0.1", "description": "Student-t distribution parameter"},
+            ]
+        elif projection_method == "umap":
+            params = [
+                {"param": "n_neighbors", "value": "15", "description": "Local neighborhood size"},
+                {"param": "min_dist", "value": "0.1", "description": "Minimum distance in 2D"},
+                {"param": "metric", "value": "euclidean", "description": "Distance metric (Euclidean)"},
+                {"param": "n_components", "value": "2", "description": "Output dimensions"},
+            ]
+        elif projection_method == "trimap":
+            params = [
+                {"param": "Geometry", "value": "Fully hyperbolic", "description": "Lorentz-distance triplets, optimised on the Poincaré ball"},
+                {"param": "Optimiser", "value": "Riemannian SGD", "description": "Poincaré student-t similarity 1/(1+d_P²)"},
+                {"param": "n_inliers", "value": "10", "description": "Nearest hyperbolic neighbours per point"},
+                {"param": "n_outliers", "value": "5", "description": "Outlier neighbours per point"},
+                {"param": "n_random", "value": "5", "description": "Random triplets per point"},
+                {"param": "n_iters", "value": "400", "description": "Riemannian SGD iterations"},
             ]
         else:
             return html.Div("Unknown projection method")
@@ -3012,23 +3308,26 @@ def register_callbacks(app: dash.Dash) -> None:
 
 
 #####################################################################################
-    # Projection button selection callbacks
     @app.callback(
         Output("proj", "data"),
         Output("proj-horopca-btn", "style"),
         Output("proj-cosne-btn", "style"),
+        Output("proj-umap-btn", "style"),
+        Output("proj-trimap-btn", "style"),
         Input("proj-horopca-btn", "n_clicks"),
         Input("proj-cosne-btn", "n_clicks"),
+        Input("proj-umap-btn", "n_clicks"),
+        Input("proj-trimap-btn", "n_clicks"),
         State("proj", "data"),
         prevent_initial_call=True,
     )
-    def _update_projection_selection(horopca_clicks, cosne_clicks, current_proj):
+    def _update_projection_selection(horopca_clicks, cosne_clicks, umap_clicks, trimap_clicks, current_proj):
         ctx = callback_context
         if not ctx.triggered:
-            return dash.no_update, dash.no_update, dash.no_update
-        
+            return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+
         triggered_id = ctx.triggered[0]["prop_id"].split(".")[0]
-        
+
         # Button styles
         active_style = {
             "backgroundColor": "#28a745",
@@ -3047,13 +3346,17 @@ def register_callbacks(app: dash.Dash) -> None:
             **active_style,
             "backgroundColor": "#6c757d"
         }
-        
+
         if triggered_id == "proj-horopca-btn":
-            return "horopca", active_style, inactive_style
+            return "horopca", active_style, inactive_style, inactive_style, inactive_style
         elif triggered_id == "proj-cosne-btn":
-            return "cosne", inactive_style, active_style
-        
-        return dash.no_update, dash.no_update, dash.no_update
+            return "cosne", inactive_style, active_style, inactive_style, inactive_style
+        elif triggered_id == "proj-umap-btn":
+            return "umap", inactive_style, inactive_style, active_style, inactive_style
+        elif triggered_id == "proj-trimap-btn":
+            return "trimap", inactive_style, inactive_style, inactive_style, active_style
+
+        return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
 
 #####################################################################################
     # Interpolation number input callbacks

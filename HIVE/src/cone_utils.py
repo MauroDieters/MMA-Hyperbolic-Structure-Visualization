@@ -215,7 +215,7 @@ def compute_cone_data(
 
     # 512D geometric cone membership (the meaningful one)
     hl = compute_cone_highlights_512d(
-        anchor_idx, dataset_name, scale=1.0, band=0.5
+        anchor_idx, dataset_name, scale=1.0, band=None
     )
     outward_512d = hl["outward_512d"]
     inward_512d = hl["inward_512d"]
@@ -232,6 +232,11 @@ def compute_cone_data(
     else:
         recall_512d = 0.0
 
+    print(f"[cone_data] anchor={anchor_idx} type={anchor_type} "
+          f"aperture={aperture_deg:.1f} "
+          f"outward_2d={len(outward_indices)} "
+          f"gt_children={gt_children} "
+          f"gt_children_in_2d_cone={set(gt_children) & set(outward_indices)}")
     return {
         "aperture_deg": aperture_deg,
         "anchor_type": anchor_type,

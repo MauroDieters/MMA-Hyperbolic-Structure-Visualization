@@ -208,48 +208,35 @@ def is_inside_cone(
     eps: float = 1e-8
 ) -> Tensor:
     """
-    OUTWARD cone — finds children (more specific than x).
-    y is a child of x if x is inside the cone of y... 
-    
-    Actually: y entailed by x means y is in x's cone.
-    Condition: -<x,y>_L < ||x||_L * cosh(ψ(x))
-    AND y is further from origin than x.
-    """
-    # Convert Poincaré → Lorentz
-    x_lorentz = poincare_to_lorentz(x.unsqueeze(0), curv, eps).squeeze(0)
-    candidates_lorentz = poincare_to_lorentz(candidates, curv, eps)
+    OUTWARD cone membership in 2D Poincaré, matching the drawn wedge.
 
-    # Aperture for x
+    The wedge is anchored at x and opens outward (away from origin) with
+    half-angle psi/2 around the radial direction. A candidate is inside if
+    it is further from the origin than x AND the angle (measured AT x)
+    between the outward radial direction and the direction x->candidate is
+    within psi/2.
+    """
+    x_lorentz = poincare_to_lorentz(x.unsqueeze(0), curv, eps).squeeze(0)
     psi = cone_aperture(x_lorentz.unsqueeze(0), curv, scale, eps).squeeze(0)
 
-    # Lorentz inner products
-    x_time = torch.sqrt(1.0 / curv + torch.sum(x_lorentz**2))
-    candidates_time = torch.sqrt(
-        1.0 / curv + torch.sum(candidates_lorentz**2, dim=-1)
-    )
-    spatial_dot = candidates_lorentz @ x_lorentz
-    lorentz_inner = spatial_dot - x_time * candidates_time
+    x_norm = torch.norm(x).clamp(min=eps)
 
-    # Lorentz norm of x
-    x_lorentz_norm = torch.acosh(
-        torch.clamp(x_time * curv**0.5, min=1.0 + eps)
-    )
+    # outward radial direction at the anchor (origin -> anchor)
+    radial_dir = x / x_norm                      # shape (2,)
 
-    lhs = -lorentz_inner
-    rhs = x_lorentz_norm * torch.cosh(psi)
+    # direction from anchor to each candidate
+    delta = candidates - x.unsqueeze(0)          # shape (N, 2)
+    delta_norm = torch.norm(delta, dim=-1).clamp(min=eps)
+    delta_dir = delta / delta_norm.unsqueeze(1)
 
-    # OUTWARD: candidates that are MORE SPECIFIC than x
-    # These have SMALLER lhs values (less inner product overlap)
-    # AND are further from origin in Poincaré space
-    x_poincare_norm = torch.norm(x)
-    candidates_poincare_norm = torch.norm(candidates, dim=-1)
-    further_out = candidates_poincare_norm > x_poincare_norm
+    cos_angle = (delta_dir @ radial_dir).clamp(-1.0, 1.0)
+    angle = torch.acos(cos_angle)                # angle AT the anchor
 
-    # Condition: lhs < rhs (opposite of what we had)
-    # AND further from origin
-    inside = (lhs < rhs) & further_out
+    cand_norm = torch.norm(candidates, dim=-1)
+    further_out = cand_norm > x_norm
+    within_angle = angle < (psi / 2.0)
 
-    return inside
+    return further_out & within_angle
 
 #-----------------------------------------------------------------------
 def is_inside_cone_inward(
@@ -260,42 +247,29 @@ def is_inside_cone_inward(
     eps: float = 1e-8
 ) -> Tensor:
     """
-    INWARD cone — finds parents (more general than x).
-    y is a parent of x if y is closer to origin AND x is in y's cone.
-    Condition: -<x,y>_L >= ||x||_L * cosh(ψ(x))
-    AND y is closer to origin than x.
+    INWARD cone membership in 2D Poincaré, matching the drawn inward wedge.
+    Opens from x toward the origin with half-angle psi/2.
     """
-    # Convert Poincaré → Lorentz
     x_lorentz = poincare_to_lorentz(x.unsqueeze(0), curv, eps).squeeze(0)
-    candidates_lorentz = poincare_to_lorentz(candidates, curv, eps)
-
-    # Aperture for x
     psi = cone_aperture(x_lorentz.unsqueeze(0), curv, scale, eps).squeeze(0)
 
-    # Lorentz inner products
-    x_time = torch.sqrt(1.0 / curv + torch.sum(x_lorentz**2))
-    candidates_time = torch.sqrt(
-        1.0 / curv + torch.sum(candidates_lorentz**2, dim=-1)
-    )
-    spatial_dot = candidates_lorentz @ x_lorentz
-    lorentz_inner = spatial_dot - x_time * candidates_time
+    x_norm = torch.norm(x).clamp(min=eps)
 
-    x_lorentz_norm = torch.acosh(
-        torch.clamp(x_time * curv**0.5, min=1.0 + eps)
-    )
+    # inward radial direction at the anchor (anchor -> origin)
+    radial_dir = -x / x_norm
 
-    lhs = -lorentz_inner
-    rhs = x_lorentz_norm * torch.cosh(psi)
+    delta = candidates - x.unsqueeze(0)
+    delta_norm = torch.norm(delta, dim=-1).clamp(min=eps)
+    delta_dir = delta / delta_norm.unsqueeze(1)
 
-    # INWARD: candidates closer to origin
-    x_poincare_norm = torch.norm(x)
-    candidates_poincare_norm = torch.norm(candidates, dim=-1)
-    closer_in = candidates_poincare_norm < x_poincare_norm
+    cos_angle = (delta_dir @ radial_dir).clamp(-1.0, 1.0)
+    angle = torch.acos(cos_angle)
 
-    # Condition: lhs >= rhs AND closer to origin
-    inside = (lhs >= rhs) & closer_in
+    cand_norm = torch.norm(candidates, dim=-1)
+    closer_in = cand_norm < x_norm
+    within_angle = angle < (psi / 2.0)
 
-    return inside
+    return closer_in & within_angle
 
 #-----------------------------------------------------------------------
 def is_inside_cone_lorentz(

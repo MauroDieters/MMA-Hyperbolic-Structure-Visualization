@@ -814,10 +814,11 @@ def register_callbacks(app: dash.Dash) -> None:
         State("points-store", "data"),
         State("meta-store", "data"),
         Input("show-512d", "data"),
+        Input("pill-highlight", "data"),
     )
     def _scatter(edata, sel, proj, traversal_path, cone_direction,
                  labels_data, target_names, mode, k_neighbors,
-                 data_store, dataset_name, points, meta, show_512d):
+                 data_store, dataset_name, points, meta, show_512d,pill_highlight):
         if edata is None or labels_data is None:
             print("Warning: No embedding or label data available for plotting")
             return {}
@@ -1323,6 +1324,25 @@ def register_callbacks(app: dash.Dash) -> None:
                         hoverinfo="skip",
                         showlegend=True,
                     ))
+
+            # ── Pill highlight (black circle from right-panel click) ──────
+        if (mode in ("cones", "tree_cones")
+                and pill_highlight is not None
+                and pill_highlight < len(dx)):
+            fig_disk.add_trace(go.Scatter(
+                x=[dx[pill_highlight]],
+                y=[dy[pill_highlight]],
+                mode="markers",
+                marker=dict(
+                    size=16,
+                    color="rgba(0,0,0,0)",
+                    symbol="circle",
+                    line=dict(width=2.5, color="black"),
+                ),
+                name="Selected relative",
+                hoverinfo="skip",
+                showlegend=False,
+            ))
 
         return fig_disk
 
@@ -2290,13 +2310,17 @@ def register_callbacks(app: dash.Dash) -> None:
         Input("cone-direction", "data"),
         Input("cone-active-tab", "data"),
         Input("mode", "data"),
+        Input("pill-highlight", "data"),
         State("emb", "data"),
         State("points-store", "data"),
         State("dataset-dropdown", "value"),
         State("proj", "data"),
+        State("images-store", "data"),
+        State("meta-store", "data"),
     )
     def _update_cone_panel(sel, cone_direction, active_tab, mode,
-                           emb_data, points, dataset_name, proj):
+                           pill_highlight, emb_data, points,
+                           dataset_name, proj, images, meta):
         if mode not in ("cones", "tree_cones") or not sel:
             return html.P(
                 "Select 1-5 points to draw entailment cones.",
@@ -2358,22 +2382,70 @@ def register_callbacks(app: dash.Dash) -> None:
             "#e67e22", "#d35400", "#f39c12", "#c0392b", "#7f2800"
         ]
 
-        def _point_pill(idx):
+        def _point_pill(idx, inside_set=None):
             lbl = labels_2d[idx] if idx < len(labels_2d) else "?"
-            color = type_colors.get(lbl, "#6c757d")
+            base_color = type_colors.get(lbl, "#6c757d")
+            is_inside = (inside_set is None) or (idx in inside_set)
+            is_selected = (pill_highlight is not None and idx == pill_highlight)
+
+            if is_inside:
+                bg = base_color
+                txt = "white"
+                opacity = "1"
+            else:
+                bg = "#d0d0d0"
+                txt = "#888"
+                opacity = "0.55"
+
+            # Orange cone-colored frame when this pill is selected
+            if is_selected:
+                border = "2px solid #e67e22"
+                box_shadow = "0 0 0 2px rgba(230,126,34,0.35)"
+            else:
+                border = "2px solid transparent"
+                box_shadow = "none"
+
             return html.Span(
                 f"#{idx} {lbl.replace('_', ' ')}",
+                id={"type": "gt-pill", "index": idx},
+                n_clicks=0,
                 style={
-                    "backgroundColor": color,
-                    "color": "white",
+                    "backgroundColor": bg,
+                    "color": txt,
+                    "opacity": opacity,
                     "padding": "0.15rem 0.4rem",
                     "borderRadius": "3px",
+                    "border": border,
+                    "boxShadow": box_shadow,
                     "fontSize": "0.75rem",
                     "marginRight": "0.3rem",
                     "marginBottom": "0.3rem",
                     "display": "inline-block",
+                    "cursor": "pointer",
+                    "transition": "border 0.15s, box-shadow 0.15s",
                 }
             )
+        
+        def _pill_detail_block(pill_idx):
+            if pill_idx is None or pill_idx >= len(points):
+                return html.Div()
+            lbl = labels_2d[pill_idx] if pill_idx < len(labels_2d) else "?"
+            color = type_colors.get(lbl, "#6c757d")
+            content = _create_content_element(pill_idx, images, points, meta)
+            return html.Div([
+                html.Hr(style={"margin": "0.5rem 0"}),
+                html.H6(
+                    f"Selected: #{pill_idx} {lbl.replace('_', ' ')}",
+                    style={"margin": "0 0 0.4rem 0", "fontSize": "0.82rem",
+                           "color": color}
+                ),
+                content,
+            ], style={
+                "padding": "0.5rem",
+                "backgroundColor": "#f8f9fa",
+                "borderRadius": "6px",
+                "marginTop": "0.5rem",
+            })
 
         # ── Intersection tab ─────────────────────────────────────────
         if active_tab == 99 and len(sel) >= 2:
@@ -2544,7 +2616,7 @@ def register_callbacks(app: dash.Dash) -> None:
             html.H6("↑ Parents",
                     style={"margin": "0.4rem 0 0.3rem 0",
                            "color": "#6c757d", "fontSize": "0.82rem"}),
-            html.Div([_point_pill(i) for i in gt_parents])
+            html.Div([_point_pill(i, set(inward_idx)) for i in gt_parents])
             if gt_parents else
             html.P("Root concept — no parents.",
                    style={"color": "#6c757d", "fontStyle": "italic",
@@ -2556,7 +2628,7 @@ def register_callbacks(app: dash.Dash) -> None:
             html.H6("↓ Children",
                     style={"margin": "0.4rem 0 0.3rem 0",
                            "color": "#6c757d", "fontSize": "0.82rem"}),
-            html.Div([_point_pill(i) for i in gt_children])
+            html.Div([_point_pill(i, set(outward_idx)) for i in gt_children])
             if gt_children else
             html.P("Leaf — no children.",
                    style={"color": "#6c757d", "fontStyle": "italic",
@@ -2591,6 +2663,9 @@ def register_callbacks(app: dash.Dash) -> None:
                     style={"fontSize": "0.78rem", "color": "#6c757d"}
                 ),
             ]),
+
+            # ── Selected pill detail (image / text) ──────────────────
+            _pill_detail_block(pill_highlight),
         ])
     
 ####################################################################################
@@ -3413,4 +3488,35 @@ def register_callbacks(app: dash.Dash) -> None:
             return True, track_on, knob_on
         return False, track_off, knob_off
 
+#####################################################################################
+# CLICKABLE Pills (cone mode right panel)
+    @app.callback(
+        Output("pill-highlight", "data"),
+        Input({"type": "gt-pill", "index": dash.ALL}, "n_clicks"),
+        State("pill-highlight", "data"),
+        prevent_initial_call=True,
+    )
+    def _highlight_pill(n_clicks_list, current):
+        ctx = callback_context
+        if not ctx.triggered or not ctx.triggered_id:
+            return dash.no_update
+        # Ignore the initial registration fire (all n_clicks 0/None)
+        if not any(n_clicks_list):
+            return dash.no_update
+        clicked_idx = ctx.triggered_id.get("index")
+        # Toggle off if the same pill is clicked again
+        if clicked_idx == current:
+            return None
+        return clicked_idx
+    
+#####################################################################################
+# clear the highlight when the anchor selection changes
+    @app.callback(
+        Output("pill-highlight", "data", allow_duplicate=True),
+        Input("sel", "data"),
+        prevent_initial_call=True,
+    )
+    def _clear_pill_on_reselect(sel):
+        return None
+    
     # End of callbacks

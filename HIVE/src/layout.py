@@ -765,6 +765,7 @@ def make_layout() -> html.Div:
             dcc.Store(id="cone-active-tab", data=0),
             dcc.Store(id="cone-multi-mode", data=False),
             dcc.Store(id="show-512d", data=True),
+            dcc.Store(id="pill-highlight", data=None),
             html.Div(
                 [_config_panel(), _centre_panel(), _cmp_panel()],
                 style={

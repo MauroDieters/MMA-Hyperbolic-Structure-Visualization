@@ -499,8 +499,23 @@ def _create_full_interactive_scatter(x, y, labels, target_names, emb_labels, tit
         )
         traces.insert(0, circle_trace)
 
+    # Cross-projection brushing target: an empty trace the clientside hover
+    # callback fills in to mark the hovered item in every panel. Identified by
+    # meta="brush" so the JS can find it regardless of trace order.
+    traces.append(
+        go.Scatter(
+            x=[], y=[],
+            mode="markers",
+            marker=dict(size=18, color="#ff00ff", symbol="circle-open", line=dict(width=4, color="#ff00ff")),
+            meta="brush",
+            name="Linked point",
+            showlegend=False,
+            hoverinfo="skip",
+        )
+    )
+
     fig = go.Figure(data=traces)
-    
+
     # Add arrow annotations for tree connections (same as single view)
     annotations = tree_arrow_annotations
     
@@ -3058,6 +3073,69 @@ def register_callbacks(app: dash.Dash) -> None:
         if not comparison_mode:
             return {}
         return _build_compare_scatter("trimap", dataset_name, sel, mode, k_neighbors, traversal_path, labels_data, target_names, data_store, points)
+
+#####################################################################################
+    # ── Cross-projection brushing ───────────────────────────────────────────────
+    # When the cursor hovers a point in any Grid-View panel, mark that SAME item
+    # (matched by its original dataset index, stored in each point's customdata)
+    # in all four panels. Runs entirely in the browser via Plotly.restyle on a
+    # dedicated meta="brush" trace, so there is no server round-trip per hover.
+    app.clientside_callback(
+        """
+        function(h1, h2, h3, h4) {
+            const ids = ["scatter-disk-1", "scatter-disk-2", "scatter-disk-3", "scatter-disk-4"];
+            const hovers = [h1, h2, h3, h4];
+
+            // Original dataset index of the hovered point (null = nothing hovered).
+            let idx = null;
+            for (const h of hovers) {
+                if (h && h.points && h.points.length) {
+                    const cd = h.points[0].customdata;
+                    if (cd !== undefined && cd !== null) { idx = cd; break; }
+                }
+            }
+
+            const getGD = function(id) {
+                const el = document.getElementById(id);
+                if (!el) return null;
+                if (el.data) return el;                       // element is the plotly graph div
+                return el.querySelector(".js-plotly-plot");   // ...or it wraps one
+            };
+
+            for (const id of ids) {
+                const gd = getGD(id);
+                if (!gd || !gd.data) continue;
+
+                // Locate this panel's brush trace.
+                let bi = -1;
+                for (let t = 0; t < gd.data.length; t++) {
+                    if (gd.data[t].meta === "brush") { bi = t; break; }
+                }
+                if (bi < 0) continue;
+
+                // Find where the hovered index sits in this panel's coordinates.
+                let bx = [], by = [];
+                if (idx !== null) {
+                    for (let t = 0; t < gd.data.length && bx.length === 0; t++) {
+                        const tr = gd.data[t];
+                        if (t === bi || !tr.customdata) continue;
+                        for (let p = 0; p < tr.customdata.length; p++) {
+                            if (tr.customdata[p] === idx) { bx = [tr.x[p]]; by = [tr.y[p]]; break; }
+                        }
+                    }
+                }
+                window.Plotly.restyle(gd, {x: [bx], y: [by]}, [bi]);
+            }
+            return window.dash_clientside.no_update;
+        }
+        """,
+        Output("brush-dummy", "data"),
+        Input("scatter-disk-1", "hoverData"),
+        Input("scatter-disk-2", "hoverData"),
+        Input("scatter-disk-3", "hoverData"),
+        Input("scatter-disk-4", "hoverData"),
+        prevent_initial_call=True,
+    )
 
 #####################################################################################
     @app.callback(

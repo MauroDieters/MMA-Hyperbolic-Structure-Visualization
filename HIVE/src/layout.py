@@ -9,6 +9,7 @@ def _compare_plot(title: str, graph_id: str, filename: str) -> html.Div:
             id=graph_id,
             figure=None,
             responsive=True,
+            clear_on_unhover=True,  # drop hoverData when leaving a point → clears the brush
             style={"width": "100%", "flex": "1 1 0", "minWidth": "0", "minHeight": "0"},
             config={
                 "displayModeBar": True,
@@ -732,6 +733,7 @@ def make_layout() -> html.Div:
             dcc.Store(id="mode", data="compare"),
             dcc.Store(id="interpolated-point"),
             dcc.Store(id="comparison-mode", data=False),
+            dcc.Store(id="brush-dummy"),  # sink for the cross-projection brushing clientside callback
             dcc.Store(id="cone-direction", data="outward"),
             dcc.Store(id="cone-data"),
             dcc.Store(id="cone-active-tab", data=0),

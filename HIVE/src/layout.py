@@ -1,8 +1,31 @@
 from dash import dcc, html
 
+
+def _compare_plot(title: str, graph_id: str, filename: str) -> html.Div:
+    """One projection panel inside the 2x2 Compare-All grid (fills its grid cell)."""
+    return html.Div([
+        html.H5(title, style={"textAlign": "center", "margin": "0 0 0.4rem 0", "color": "#333", "fontSize": "0.9rem"}),
+        dcc.Graph(
+            id=graph_id,
+            figure=None,
+            responsive=True,
+            style={"width": "100%", "flex": "1 1 0", "minWidth": "0", "minHeight": "0"},
+            config={
+                "displayModeBar": True,
+                "displaylogo": False,
+                "modeBarButtonsToRemove": ["lasso2d", "select2d"],
+                "showTips": True,
+                "toImageButtonOptions": {"format": "png", "filename": filename, "height": 600, "width": 600, "scale": 2},
+                "modeBarButtons": [["pan2d", "zoom2d", "zoomIn2d", "zoomOut2d", "autoScale2d", "resetScale2d"], ["toImage"]],
+            },
+        ),
+    ], style={"display": "flex", "flexDirection": "column", "minWidth": "0", "minHeight": "0", "alignItems": "center", "overflow": "hidden"})
+
+
 def _config_panel() -> html.Div:
     return html.Div(
-        [
+        id="config-panel",
+        children=[
             html.H4("Configuration", style={"color": "white", "marginBottom": "1rem"}),
             html.Label("Dataset", style={"color": "#e2e8f0"}),
             dcc.Dropdown(
@@ -39,6 +62,23 @@ def _config_panel() -> html.Div:
                 html.Button(
                     "CO-SNE",
                     id="proj-cosne-btn",
+                    style={
+                        "backgroundColor": "#6c757d",
+                        "color": "white",
+                        "border": "none",
+                        "padding": "0.5rem 1rem",
+                        "borderRadius": "6px",
+                        "cursor": "pointer",
+                        "width": "100%",
+                        "minWidth": "0",
+                        "flex": "1 1 0",
+                        "boxSizing": "border-box",
+                        "transition": "background-color 0.2s",
+                    },
+                ),
+                html.Button(
+                    "TriMap",
+                    id="proj-trimap-btn",
                     style={
                         "backgroundColor": "#6c757d",
                         "color": "white",
@@ -106,7 +146,7 @@ def _config_panel() -> html.Div:
             "transition": "background-color 0.2s",
         },
     ),
-    html.Span("Dual View", style={
+    html.Span("Grid View", style={
         "fontSize": "0.78rem",
         "color": "#a0aec0",
         "marginLeft": "0.6rem",
@@ -459,7 +499,26 @@ html.Div([
 
 def _centre_panel() -> html.Div:
     return html.Div(
-        [
+        id="centre-panel",
+        children=[
+            html.Button(
+                "← Return to single view",
+                id="exit-comparison-btn",
+                n_clicks=0,
+                style={
+                    "display": "none",  # only shown in comparison mode
+                    "alignSelf": "flex-start",
+                    "marginBottom": "0.5rem",
+                    "backgroundColor": "#4a5568",
+                    "color": "white",
+                    "border": "none",
+                    "padding": "0.5rem 1rem",
+                    "borderRadius": "6px",
+                    "cursor": "pointer",
+                    "fontWeight": "600",
+                    "transition": "background-color 0.2s",
+                },
+            ),
             html.Div(
                 id="single-plot-container",
                 children=[
@@ -503,85 +562,20 @@ def _centre_panel() -> html.Div:
             html.Div(
                 id="comparison-plot-container",
                 children=[
-                    html.Div([
-                        html.H5("HoroPCA", style={"textAlign": "center", "margin": "0 0 1rem 0", "color": "#333"}),
-                        dcc.Graph(
-                            id="scatter-disk-1",
-                            figure=None,
-                            style={
-                                "width": "100%", 
-                                "height": "100%",
-                                "aspectRatio": "2 / 3",
-                                "maxWidth": "50vh",
-                                "maxHeight": "75vh",
-                                "minWidth": "300px",
-                                "minHeight": "450px"
-                            },
-                            config={
-                                "displayModeBar": True,
-                                "displaylogo": False,
-                                "modeBarButtonsToRemove": ["lasso2d", "select2d"],
-                                "modeBarButtonsToAdd": [],
-                                "showTips": True,
-                                "toImageButtonOptions": {
-                                    "format": "png",
-                                    "filename": "horopca_plot",
-                                    "height": 600,
-                                    "width": 800,
-                                    "scale": 2
-                                },
-                                "modeBarButtons": [
-                                    ["pan2d", "zoom2d", "zoomIn2d", "zoomOut2d", "autoScale2d", "resetScale2d"],
-                                    ["toImage"]
-                                ]
-                            },
-                        ),
-                    ], style={"flex": "1", "display": "flex", "flexDirection": "column", "minWidth": "0", "overflow": "visible", "alignItems": "center", "justifyContent": "center"}),
-                    html.Div([
-                        html.H5("CO-SNE", style={"textAlign": "center", "margin": "0 0 1rem 0", "color": "#333"}),
-                        dcc.Graph(
-                            id="scatter-disk-2",
-                            figure=None,
-                            style={
-                                "width": "100%", 
-                                "height": "100%",
-                                "aspectRatio": "2 / 3",
-                                "maxWidth": "50vh",
-                                "maxHeight": "75vh",
-                                "minWidth": "300px",
-                                "minHeight": "450px"
-                            },
-                            config={
-                                "displayModeBar": True,
-                                "displaylogo": False,
-                                "modeBarButtonsToRemove": ["lasso2d", "select2d"],
-                                "modeBarButtonsToAdd": [],
-                                "showTips": True,
-                                "toImageButtonOptions": {
-                                    "format": "png",
-                                    "filename": "cosne_plot",
-                                    "height": 600,
-                                    "width": 800,
-                                    "scale": 2
-                                },
-                                "modeBarButtons": [
-                                    ["pan2d", "zoom2d", "zoomIn2d", "zoomOut2d", "autoScale2d", "resetScale2d"],
-                                    ["toImage"]
-                                ]
-                            },
-                        ),
-                    ], style={"flex": "1", "display": "flex", "flexDirection": "column", "alignItems": "center", "justifyContent": "center"}),
+                    _compare_plot("HoroPCA", "scatter-disk-1", "horopca_plot"),
+                    _compare_plot("CO-SNE",  "scatter-disk-2", "cosne_plot"),
+                    _compare_plot("TriMap",  "scatter-disk-4", "trimap_plot"),
+                    _compare_plot("UMAP",    "scatter-disk-3", "umap_plot"),
                 ],
                 style={
-                    "display": "none",
+                    "display": "none",  # shown as a 2x2 grid by the toggle callback
                     "width": "100%",
                     "height": "100%",
                     "margin": "auto",
-                    "gap": "2rem",
-                    "flexDirection": "row",
-                    "overflow": "visible",
-                    "alignItems": "center",
-                    "justifyContent": "center",
+                    "gap": "0.5rem",
+                    "gridTemplateColumns": "1fr 1fr",
+                    "gridTemplateRows": "1fr 1fr",
+                    "minHeight": "0",
                 },
             ),
         ],
@@ -626,7 +620,8 @@ def _tree_node(title: str, content: html.Div, is_current: bool = False) -> html.
 
 def _cmp_panel() -> html.Div:
     return html.Div(
-        [
+        id="right-panel",
+        children=[
             html.Div(id="cmp-header"),
             html.Div(id="cmp-instructions"),
             html.Div(

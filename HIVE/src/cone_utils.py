@@ -80,6 +80,57 @@ def _get_gt_relatives(
     return gt_children, gt_parents
 
 #---------------------------------------------------------------------
+def get_direct_relatives(
+    anchor_idx: int,
+    points: list,
+    labels_2d: list,
+    dataset_name: str
+) -> tuple[list, list]:
+    """
+    Direct (adjacent-level) parents/children of the anchor — the immediate
+    edges in the tree, as opposed to the full transitive taxonomy returned by
+    :func:`_get_gt_relatives`.
+
+    HyCoCLIP is trained on specific parent-child pairs, not the whole
+    taxonomy, so evaluating recall against these direct pairs is the fair
+    test of whether the model encodes the relationships it actually saw.
+
+    Uses the levels *present in the anchor's tree* (not LEVEL_MAP directly) so
+    ImageNet — which has no parent_image level — still resolves the correct
+    immediate child/parent instead of leaving a gap.
+
+    Returns:
+        direct_children: indices one level deeper than the anchor
+        direct_parents:  indices one level shallower than the anchor
+    """
+    anchor_tree_id = _get_tree_id(points[anchor_idx], dataset_name)
+    anchor_level = LEVEL_MAP.get(labels_2d[anchor_idx], 0)
+
+    tree_indices = [
+        i for i, p in enumerate(points)
+        if _get_tree_id(p, dataset_name) == anchor_tree_id
+    ]
+    levels_present = sorted(
+        {LEVEL_MAP.get(labels_2d[i], 0) for i in tree_indices} - {0}
+    )
+
+    deeper = [lv for lv in levels_present if lv > anchor_level]
+    shallower = [lv for lv in levels_present if lv < anchor_level]
+    child_level = min(deeper) if deeper else None
+    parent_level = max(shallower) if shallower else None
+
+    direct_children = [
+        i for i in tree_indices
+        if i != anchor_idx and LEVEL_MAP.get(labels_2d[i], 0) == child_level
+    ] if child_level is not None else []
+    direct_parents = [
+        i for i in tree_indices
+        if i != anchor_idx and LEVEL_MAP.get(labels_2d[i], 0) == parent_level
+    ] if parent_level is not None else []
+
+    return direct_children, direct_parents
+
+#---------------------------------------------------------------------
 def compute_cone_aperture_2d(
     anchor_2d: np.ndarray,
     scale: float = CONE_SCALE_2D

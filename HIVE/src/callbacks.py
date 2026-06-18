@@ -575,6 +575,68 @@ def _create_full_interactive_scatter(x, y, labels, target_names, emb_labels, tit
 
 
 #-------------------------------------------------------------------------------------
+def _add_cones_to_fig(fig, dx, dy, sel, cone_direction, mode, dataset_name,
+                      show_512d, cone_colors, disk_radius):
+    """Draw entailment-cone wedges (+ optional 512D rings) onto a compare-panel fig.
+
+    Mirrors the single-disk cone overlay so cones also appear in Dual/Grid view.
+    ``dx``/``dy`` are THIS projection's 2D coords (wedge placed per panel); the
+    512D membership is computed in the original space so it's identical everywhere.
+    """
+    if mode not in ("cones", "tree_cones") or not sel:
+        return fig
+    from .cone_utils import (
+        compute_cone_aperture_2d,
+        compute_cone_wedge_path,
+        compute_inward_cone_wedge_path,
+        CONE_SCALE_2D,
+    )
+    shapes = []
+    for i, anchor_idx in enumerate(sel):
+        if anchor_idx >= len(dx):
+            continue
+        color = cone_colors[i % len(cone_colors)]
+        anchor_2d = np.array([dx[anchor_idx], dy[anchor_idx]])
+        ap = compute_cone_aperture_2d(anchor_2d, scale=CONE_SCALE_2D)
+        if cone_direction in ("outward", "both"):
+            shapes.append(dict(type="path",
+                path=compute_cone_wedge_path(anchor_2d, ap, disk_radius=disk_radius),
+                fillcolor=color["fill"], line=dict(color=color["line"], width=1.5),
+                layer="below"))
+        if cone_direction in ("inward", "both"):
+            shapes.append(dict(type="path",
+                path=compute_inward_cone_wedge_path(anchor_2d, ap, disk_radius=disk_radius),
+                fillcolor=color["fill"], line=dict(color=color["line"], width=1.5, dash="dot"),
+                layer="below"))
+    fig.update_layout(shapes=shapes)
+
+    if show_512d:
+        hl_out, hl_in = [], []
+        for anchor_idx in sel:
+            if anchor_idx >= len(dx):
+                continue
+            hl = compute_cone_highlights_512d(anchor_idx=anchor_idx,
+                                              dataset_name=dataset_name, scale=1.0, band=None)
+            if cone_direction in ("outward", "both"):
+                hl_out += hl["outward_512d"]
+            if cone_direction in ("inward", "both"):
+                hl_in += hl["inward_512d"]
+        hl_out = [i for i in set(hl_out) if i < len(dx) and i not in sel]
+        hl_in = [i for i in set(hl_in) if i < len(dx) and i not in sel]
+        if hl_out:
+            fig.add_trace(go.Scatter(x=[dx[i] for i in hl_out], y=[dy[i] for i in hl_out],
+                mode="markers", marker=dict(size=11, color="rgba(0,0,0,0)",
+                line=dict(width=2, color="#9b59b6")),
+                name="512D outward cone", hoverinfo="skip", showlegend=True))
+        if hl_in:
+            fig.add_trace(go.Scatter(x=[dx[i] for i in hl_in], y=[dy[i] for i in hl_in],
+                mode="markers", marker=dict(size=11, color="rgba(0,0,0,0)",
+                line=dict(width=2, color="#d7bde2")),
+                name="512D inward cone", hoverinfo="skip", showlegend=True))
+    return fig
+
+
+#-------------------------------------------------------------------------------------
 def register_callbacks(app: dash.Dash) -> None:
     CONE_COLORS = [
         {"fill": "rgba(230, 126, 34, 0.20)", "line": "rgba(230, 126, 34, 0.9)"},
@@ -1389,6 +1451,40 @@ def register_callbacks(app: dash.Dash) -> None:
                             line=dict(width=2, color="#d7bde2"),
                         ),
                         name="512D inward cone",
+                        hoverinfo="skip",
+                        showlegend=True,
+                    ))
+
+            # ── GT children highlight (purple rings) ─────────────────────
+            if points and emb_labels:
+                from .cone_utils import LEVEL_MAP as _LEVEL_MAP
+                all_gt_children: set[int] = set()
+                for anchor_idx in sel:
+                    if anchor_idx >= len(emb_labels):
+                        continue
+                    anchor_tree = (points[anchor_idx].get("tree_id", "")
+                                   if anchor_idx < len(points) else "")
+                    anchor_level = _LEVEL_MAP.get(emb_labels[anchor_idx], 0)
+                    for i, pt in enumerate(points):
+                        if i == anchor_idx or pt.get("tree_id", "") != anchor_tree:
+                            continue
+                        pt_level = _LEVEL_MAP.get(
+                            emb_labels[i] if i < len(emb_labels) else "", 0)
+                        if pt_level > anchor_level:
+                            all_gt_children.add(i)
+                gt_visible = [i for i in all_gt_children
+                              if i < len(dx) and i not in sel]
+                if gt_visible:
+                    fig_disk.add_trace(go.Scatter(
+                        x=[dx[i] for i in gt_visible],
+                        y=[dy[i] for i in gt_visible],
+                        mode="markers",
+                        marker=dict(
+                            size=13,
+                            color="rgba(0,0,0,0)",
+                            line=dict(width=2.5, color="#8e44ad"),
+                        ),
+                        name="GT children",
                         hoverinfo="skip",
                         showlegend=True,
                     ))
@@ -2567,7 +2663,9 @@ def register_callbacks(app: dash.Dash) -> None:
                 }
             )
 
-        from .cone_utils import compute_cone_data
+        from .cone_utils import compute_cone_data, get_direct_relatives
+
+        n_pool = max(len(coords_2d) - 1, 0)  # candidate points for baseline
 
         type_colors = {
             'parent_text': '#e41a1c',
@@ -2624,6 +2722,102 @@ def register_callbacks(app: dash.Dash) -> None:
                 }
             )
         
+        def _precision_block(cov_gt, cone_members, cov_noun, n_pool):
+            """Precision of the cone vs ground-truth relatives, with the
+            random baseline and lift over chance.
+
+            precision = cone members that are GT relatives / all cone members.
+            Uses the same cone as the Coverage metric above, so the GT-relative
+            hit count lines up between the two.
+
+            Random baseline = expected precision when drawing the same number
+            of points at random from the candidate pool = |GT| / pool_size
+            (the base rate of GT relatives). Lift = precision / baseline tells
+            you how many times better than chance the cone actually is.
+            """
+            gt_set = set(cov_gt)
+            cone_set = set(cone_members)
+            hits = len(gt_set & cone_set)
+            precision_pct = (hits / len(cone_set) * 100) if cone_set else 0.0
+            clr = ("#28a745" if precision_pct >= 60 else
+                   "#ffc107" if precision_pct >= 30 else "#dc3545")
+
+            # Random baseline: pick |cone| points at random from the pool.
+            baseline_pct = (len(gt_set) / n_pool * 100) if n_pool > 0 else 0.0
+            if baseline_pct > 0:
+                lift = precision_pct / baseline_pct
+                lift_txt = f"{lift:.1f}× vs chance"
+                lift_clr = ("#28a745" if lift >= 2 else
+                            "#ffc107" if lift >= 1 else "#dc3545")
+            else:
+                lift_txt = "n/a"
+                lift_clr = "#6c757d"
+
+            return html.Div([
+                html.Hr(style={"margin": "0.4rem 0"}),
+                html.H6("Precision",
+                        style={"margin": "0 0 0.3rem 0", "color": "#333",
+                               "fontSize": "0.82rem"}),
+                html.Div([
+                    html.Span(f"{precision_pct:.1f}%",
+                              style={"fontSize": "1.4rem", "fontWeight": "bold",
+                                     "color": clr, "marginRight": "0.4rem"}),
+                    html.Span(
+                        f"{hits}/{len(cone_set)} cone members are GT {cov_noun}"
+                        if cone_set else "empty cone",
+                        style={"fontSize": "0.78rem", "color": "#6c757d"}),
+                ]),
+                html.Div([
+                    html.Span("Random baseline: ",
+                              style={"fontSize": "0.74rem", "color": "#6c757d"}),
+                    html.Span(f"{baseline_pct:.1f}%  ",
+                              style={"fontSize": "0.74rem", "color": "#495057",
+                                     "fontWeight": "600"}),
+                    html.Span(lift_txt,
+                              style={"fontSize": "0.74rem", "fontWeight": "700",
+                                     "color": lift_clr}),
+                ], style={"margin": "0.2rem 0 0 0"}),
+                html.P(
+                    f"(chance precision from picking {len(cone_set)} of "
+                    f"{n_pool} points at random)",
+                    style={"fontSize": "0.68rem", "color": "#adb5bd",
+                           "fontStyle": "italic", "margin": "0.1rem 0 0 0"}),
+            ])
+
+        def _trained_recall_block(direct_gt, cone_members, cov_noun):
+            """Recall against the DIRECT (adjacent-level) pairs only — the
+            relationships HyCoCLIP was actually trained on — rather than the
+            full transitive taxonomy. Lets us separate 'doesn't recover the
+            dataset's full taxonomy' from 'doesn't encode hierarchy at all'.
+            """
+            gt_set = set(direct_gt)
+            cone_set = set(cone_members)
+            hits = len(gt_set & cone_set)
+            recall_pct = (hits / len(gt_set) * 100) if gt_set else 0.0
+            clr = ("#28a745" if recall_pct >= 60 else
+                   "#ffc107" if recall_pct >= 30 else "#dc3545")
+
+            return html.Div([
+                html.Hr(style={"margin": "0.4rem 0"}),
+                html.H6("Recall — trained (direct) pairs",
+                        style={"margin": "0 0 0.3rem 0", "color": "#333",
+                               "fontSize": "0.82rem"}),
+                html.Div([
+                    html.Span(f"{recall_pct:.0f}%",
+                              style={"fontSize": "1.4rem", "fontWeight": "bold",
+                                     "color": clr, "marginRight": "0.4rem"}),
+                    html.Span(
+                        f"{hits}/{len(gt_set)} direct {cov_noun} captured"
+                        if gt_set else f"no direct {cov_noun}",
+                        style={"fontSize": "0.78rem", "color": "#6c757d"}),
+                ]),
+                html.P(
+                    "Direct = immediate parent/child edge (what the model was "
+                    "trained on), not the whole taxonomy.",
+                    style={"fontSize": "0.68rem", "color": "#adb5bd",
+                           "fontStyle": "italic", "margin": "0.1rem 0 0 0"}),
+            ])
+
         def _pill_detail_block(pill_idx):
             if pill_idx is None or pill_idx >= len(points):
                 return html.Div()
@@ -2859,13 +3053,18 @@ def register_callbacks(app: dash.Dash) -> None:
             inward_idx  = cd["inward_indices"]
             type_color  = type_colors.get(anchor_type, "#6c757d")
 
+            direct_children, direct_parents = get_direct_relatives(
+                anchor_idx, points, labels_2d, dataset_name)
+
             if active_tab == "out":
                 cov_gt, cov_cone, cov_noun = gt_children, outward_idx, "children"
+                cov_direct = direct_children
                 sect_title, sect_arrow = "↓ Children", "outward"
                 gt_list, inside_set = gt_children, set(outward_idx)
                 accent = "#e67e22"
             else:  # "in"
                 cov_gt, cov_cone, cov_noun = gt_parents, inward_idx, "parents"
+                cov_direct = direct_parents
                 sect_title, sect_arrow = "↑ Parents", "inward"
                 gt_list, inside_set = gt_parents, set(inward_idx)
                 accent = "#377eb8"
@@ -2928,6 +3127,10 @@ def register_callbacks(app: dash.Dash) -> None:
                         style={"fontSize": "0.78rem", "color": "#6c757d"}),
                 ]),
 
+                _precision_block(cov_gt, cov_cone, cov_noun, n_pool),
+
+                _trained_recall_block(cov_direct, cov_cone, cov_noun),
+
                 _pill_detail_block(pill_highlight),
             ])
 
@@ -2958,14 +3161,18 @@ def register_callbacks(app: dash.Dash) -> None:
         # Coverage follows the active cone direction.
         # Outward/both -> children inside outward cone.
         # Inward       -> parents  inside inward cone.
+        direct_children, direct_parents = get_direct_relatives(
+            anchor_idx, points, labels_2d, dataset_name)
         if cone_direction == "inward":
             cov_gt   = gt_parents
             cov_cone = inward_idx
             cov_noun = "parents"
+            cov_direct = direct_parents
         else:
             cov_gt   = gt_children
             cov_cone = outward_idx
             cov_noun = "children"
+            cov_direct = direct_children
 
         cov_hits = len(set(cov_gt) & set(cov_cone))
         coverage_pct = (cov_hits / len(cov_gt) * 100) if cov_gt else 0.0
@@ -3070,6 +3277,12 @@ def register_callbacks(app: dash.Dash) -> None:
                     style={"fontSize": "0.78rem", "color": "#6c757d"}
                 ),
             ]),
+
+            # ── Precision of the cone (same cone as Coverage above) ───
+            _precision_block(cov_gt, cov_cone, cov_noun, n_pool),
+
+            # ── Recall against trained (direct adjacent-level) pairs ───
+            _trained_recall_block(cov_direct, cov_cone, cov_noun),
 
             # ── Selected pill detail (image / text) ──────────────────
             _pill_detail_block(pill_highlight),
@@ -3236,9 +3449,11 @@ def register_callbacks(app: dash.Dash) -> None:
         State("data-store", "data"),
         State("points-store", "data"),
         Input("comparison-mode", "data"),
+        Input("cone-direction", "data"),
+        Input("show-512d", "data"),
         State("proj", "data"),
     )
-    def _scatter_plot_2(dataset_name, sel, mode, k_neighbors, traversal_path, labels_data, target_names, data_store, points, comparison_mode, selected_proj):
+    def _scatter_plot_2(dataset_name, sel, mode, k_neighbors, traversal_path, labels_data, target_names, data_store, points, comparison_mode, cone_direction, show_512d, selected_proj):
         if not comparison_mode or labels_data is None or not dataset_name:
             return {}
         
@@ -3377,6 +3592,8 @@ def register_callbacks(app: dash.Dash) -> None:
         
         # Create the figure with all mode features
         fig = _create_full_interactive_scatter(dx, dy, labels, target_names, emb_labels, "", sel, neighbor_indices, tree_connections, interp_transformed, mode, points=points)
+        dr = float(np.max(np.sqrt(dx**2 + dy**2))) + 0.08 if len(dx) else 1.0
+        fig = _add_cones_to_fig(fig, dx, dy, sel, cone_direction, mode, dataset_name, show_512d, CONE_COLORS, dr)
         return fig
 
 #####################################################################################
@@ -3392,9 +3609,11 @@ def register_callbacks(app: dash.Dash) -> None:
         State("data-store", "data"),
         State("points-store", "data"),
         Input("comparison-mode", "data"),
+        Input("cone-direction", "data"),
+        Input("show-512d", "data"),
         State("proj", "data"),
     )
-    def _scatter_plot_1(dataset_name, sel, mode, k_neighbors, traversal_path, labels_data, target_names, data_store, points, comparison_mode, selected_proj):
+    def _scatter_plot_1(dataset_name, sel, mode, k_neighbors, traversal_path, labels_data, target_names, data_store, points, comparison_mode, cone_direction, show_512d, selected_proj):
         if not comparison_mode or labels_data is None or not dataset_name:
             return {}
         
@@ -3533,11 +3752,14 @@ def register_callbacks(app: dash.Dash) -> None:
 
         # Create the figure with all mode features
         fig = _create_full_interactive_scatter(dx, dy, labels, target_names, emb_labels, "", sel, neighbor_indices, tree_connections, interp_transformed, mode, points=points)
+        dr = float(np.max(np.sqrt(dx**2 + dy**2))) + 0.08 if len(dx) else 1.0
+        fig = _add_cones_to_fig(fig, dx, dy, sel, cone_direction, mode, dataset_name, show_512d, CONE_COLORS, dr)
         return fig
 
 #####################################################################################
     def _build_compare_scatter(proj_name, dataset_name, sel, mode, k_neighbors,
-                               traversal_path, labels_data, target_names, data_store, points):
+                               traversal_path, labels_data, target_names, data_store, points,
+                               cone_direction="outward", show_512d=False):
         """Shared loader/renderer for an extra projection panel in Compare-All view.
 
         Mirrors _scatter_plot_1/_scatter_plot_2 but loads {proj_name}_embeddings.pkl,
@@ -3625,7 +3847,9 @@ def register_callbacks(app: dash.Dash) -> None:
 
         emb_labels = emb_data.get("labels", [])
         # UMAP is Euclidean — don't draw the Poincaré disk boundary around it.
-        return _create_full_interactive_scatter(dx, dy, labels, target_names, emb_labels, "", sel, neighbor_indices, tree_connections, interp_transformed, mode, points=points, draw_boundary=(proj_name != "umap"))
+        fig = _create_full_interactive_scatter(dx, dy, labels, target_names, emb_labels, "", sel, neighbor_indices, tree_connections, interp_transformed, mode, points=points, draw_boundary=(proj_name != "umap"))
+        dr = float(np.max(np.sqrt(dx**2 + dy**2))) + 0.08 if len(dx) else 1.0
+        return _add_cones_to_fig(fig, dx, dy, sel, cone_direction, mode, dataset_name, show_512d, CONE_COLORS, dr)
 
 #####################################################################################
     @app.callback(
@@ -3640,11 +3864,13 @@ def register_callbacks(app: dash.Dash) -> None:
         State("data-store", "data"),
         State("points-store", "data"),
         Input("comparison-mode", "data"),
+        Input("cone-direction", "data"),
+        Input("show-512d", "data"),
     )
-    def _scatter_plot_3(dataset_name, sel, mode, k_neighbors, traversal_path, labels_data, target_names, data_store, points, comparison_mode):
+    def _scatter_plot_3(dataset_name, sel, mode, k_neighbors, traversal_path, labels_data, target_names, data_store, points, comparison_mode, cone_direction, show_512d):
         if not comparison_mode:
             return {}
-        return _build_compare_scatter("umap", dataset_name, sel, mode, k_neighbors, traversal_path, labels_data, target_names, data_store, points)
+        return _build_compare_scatter("umap", dataset_name, sel, mode, k_neighbors, traversal_path, labels_data, target_names, data_store, points, cone_direction, show_512d)
 
 #####################################################################################
     @app.callback(
@@ -3659,11 +3885,13 @@ def register_callbacks(app: dash.Dash) -> None:
         State("data-store", "data"),
         State("points-store", "data"),
         Input("comparison-mode", "data"),
+        Input("cone-direction", "data"),
+        Input("show-512d", "data"),
     )
-    def _scatter_plot_4(dataset_name, sel, mode, k_neighbors, traversal_path, labels_data, target_names, data_store, points, comparison_mode):
+    def _scatter_plot_4(dataset_name, sel, mode, k_neighbors, traversal_path, labels_data, target_names, data_store, points, comparison_mode, cone_direction, show_512d):
         if not comparison_mode:
             return {}
-        return _build_compare_scatter("trimap", dataset_name, sel, mode, k_neighbors, traversal_path, labels_data, target_names, data_store, points)
+        return _build_compare_scatter("trimap", dataset_name, sel, mode, k_neighbors, traversal_path, labels_data, target_names, data_store, points, cone_direction, show_512d)
 
 #####################################################################################
     # ── Cross-projection brushing ───────────────────────────────────────────────

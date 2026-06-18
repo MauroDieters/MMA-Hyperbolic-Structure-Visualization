@@ -23,6 +23,14 @@ from sklearn.utils.validation import check_non_negative
 from sklearn.utils.validation import _deprecate_positional_args
 from sklearn.decomposition import PCA
 from sklearn.metrics.pairwise import pairwise_distances
+
+# sklearn >=1.6 removed BaseEstimator._validate_data in favour of the
+# module-level validate_data(estimator, X, ...). Shim for both old and new.
+try:
+    from sklearn.utils.validation import validate_data as _validate_data_compat
+except ImportError:  # sklearn < 1.6
+    def _validate_data_compat(estimator, X, **kw):
+        return estimator._validate_data(X, **kw)
 # mypy error: Module 'sklearn.manifold' has no attribute '_utils'
 from sklearn.manifold import _utils  # type: ignore
 # mypy error: Module 'sklearn.manifold' has no attribute '_barnes_hut_tsne'
@@ -854,11 +862,11 @@ class TSNE(BaseEstimator):
                 FutureWarning
             )
         if self.method == 'barnes_hut':
-            X = self._validate_data(X, accept_sparse=['csr'],
+            X = _validate_data_compat(self, X, accept_sparse=['csr'],
                                     ensure_min_samples=2,
                                     dtype=[np.float32, np.float64])
         else:
-            X = self._validate_data(X, accept_sparse=['csr', 'csc', 'coo'],
+            X = _validate_data_compat(self, X, accept_sparse=['csr', 'csc', 'coo'],
                                     dtype=[np.float32, np.float64])
         
         if self.metric == "precomputed":

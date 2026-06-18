@@ -405,11 +405,11 @@ html.Div([
                     "width": "18px", "height": "18px",
                     "backgroundColor": "white", "borderRadius": "50%",
                     "transition": "transform 0.2s",
-                    "transform": "translateX(20px)",
+                    "transform": "translateX(0px)",
                 }),
                 style={
                     "width": "44px", "height": "24px",
-                    "backgroundColor": "#41ae76",
+                    "backgroundColor": "#4a5568",
                     "borderRadius": "12px", "border": "none",
                     "cursor": "pointer", "padding": "3px",
                     "display": "flex", "alignItems": "center",
@@ -704,6 +704,22 @@ def _cmp_panel() -> html.Div:
                     id="cone-panel",
                     style={"display": "none"},
                     children=[
+                        html.Button(
+                        "Clear cones",
+                        id="clear-cones-btn",
+                        n_clicks=0,
+                        style={
+                            "marginBottom": "0.6rem",
+                            "padding": "0.35rem 0.8rem",
+                            "fontSize": "0.8rem",
+                            "border": "none",
+                            "borderRadius": "5px",
+                            "backgroundColor": "#dc3545",
+                            "color": "white",
+                            "cursor": "pointer",
+                            "width": "100%",
+                        }
+                    ),
                     html.Div(
                     id="cone-tab-bar",
                     style={
@@ -713,6 +729,7 @@ def _cmp_panel() -> html.Div:
                         "flexWrap": "wrap",
                         },
             ),
+            
         html.Div(id="cone-tab-content"),
     ]
 ),
@@ -769,8 +786,10 @@ def make_layout() -> html.Div:
             dcc.Store(id="cone-data"),
             dcc.Store(id="cone-active-tab", data=0),
             dcc.Store(id="cone-multi-mode", data=False),
-            dcc.Store(id="show-512d", data=True),
+            dcc.Store(id="show-512d", data=False),
             dcc.Store(id="pill-highlight", data=None),
+            dcc.Store(id="pair-highlight", data=None),
+            dcc.Store(id="all-highlight", data=False),
             html.Div(
                 [_config_panel(), _centre_panel(), _cmp_panel()],
                 style={

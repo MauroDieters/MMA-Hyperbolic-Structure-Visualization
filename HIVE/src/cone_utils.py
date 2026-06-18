@@ -416,3 +416,43 @@ def compute_cone_highlights_512d(
         "inward_512d":  inward_512d,
         "n_total":      n_total,
     }
+
+#----------------------------------------------------------------------------
+def cone_wedge_polygon(
+    anchor_2d, aperture_deg, disk_radius=1.0,
+    direction="outward", n_points=50
+):
+    """Return the wedge as a list of (x, y) vertices (same geometry as
+    compute_cone_wedge_path / compute_inward_cone_wedge_path)."""
+    cx, cy = float(anchor_2d[0]), float(anchor_2d[1])
+    anchor_norm = np.sqrt(cx**2 + cy**2)
+
+    if anchor_norm < 1e-8:
+        theta_center = 0.0
+    elif direction == "inward":
+        theta_center = np.arctan2(-cy, -cx)
+    else:
+        theta_center = np.arctan2(cy, cx)
+
+    half = np.deg2rad(min(aperture_deg / 2.0, 89.0))
+    thetas = np.linspace(theta_center - half, theta_center + half, n_points)
+
+    verts = [(cx, cy)]
+    for t in thetas:
+        ddx, ddy = np.cos(t), np.sin(t)
+        a = 1.0
+        b = 2.0 * (cx * ddx + cy * ddy)
+        c = cx**2 + cy**2 - disk_radius**2
+        disc = b**2 - 4 * a * c
+        if disc < 0:
+            s = disk_radius
+        else:
+            s1 = (-b + np.sqrt(disc)) / 2.0
+            s2 = (-b - np.sqrt(disc)) / 2.0
+            if direction == "inward":
+                cand = [s for s in (s1, s2) if s > 0]
+                s = min(cand) if cand else anchor_norm
+            else:
+                s = max(s1, s2)
+        verts.append((cx + s * ddx, cy + s * ddy))
+    return verts

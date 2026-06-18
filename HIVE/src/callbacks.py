@@ -849,10 +849,13 @@ def register_callbacks(app: dash.Dash) -> None:
         State("meta-store", "data"),
         Input("show-512d", "data"),
         Input("pill-highlight", "data"),
+        Input("pair-highlight", "data"),
+        Input("all-highlight", "data")
     )
     def _scatter(edata, sel, proj, traversal_path, cone_direction,
                  labels_data, target_names, mode, k_neighbors,
-                 data_store, dataset_name, points, meta, show_512d,pill_highlight):
+                 data_store, dataset_name, points, meta, show_512d,pill_highlight,
+                 pair_highlight, all_highlight):
         if edata is None or labels_data is None:
             print("Warning: No embedding or label data available for plotting")
             return {}
@@ -1320,6 +1323,22 @@ def register_callbacks(app: dash.Dash) -> None:
 
             fig_disk.update_layout(shapes=shapes)
 
+            # Numbered labels on each cone anchor (black, over the gold ring)
+            badge_x = [dx[a] for a in sel if a < len(dx)]
+            badge_y = [dy[a] for a in sel if a < len(dx)]
+            badge_t = [str(i + 1) for i, a in enumerate(sel) if a < len(dx)]
+            if badge_x:
+                fig_disk.add_trace(go.Scatter(
+                    x=badge_x, y=badge_y,
+                    mode="text",
+                    text=badge_t,
+                    textfont=dict(size=11, color="white",
+                                  family="Arial white"),
+                    textposition="middle center",
+                    hoverinfo="skip",
+                    showlegend=False,
+                ))
+
             # ── 512D cone highlights (purple rings) ──────────────────
             if show_512d:
                 hl_outward = []
@@ -1392,6 +1411,133 @@ def register_callbacks(app: dash.Dash) -> None:
                 hoverinfo="skip",
                 showlegend=False,
             ))
+
+        # ── Pair intersection highlight (from matrix cell click) ──────
+        if (mode in ("cones", "tree_cones")
+                and pair_highlight is not None
+                and len(sel) >= 2):
+            i, j = pair_highlight
+            if i < len(sel) and j < len(sel):
+                # ---- 2D wedge overlap region (light blue, drawn first) ----
+                from .cone_utils import (
+                    cone_wedge_polygon, compute_cone_aperture_2d, CONE_SCALE_2D
+                )
+                try:
+                    from shapely.geometry import Polygon
+                    dir_ = "inward" if cone_direction == "inward" else "outward"
+                    polys = []
+                    for c in (sel[i], sel[j]):
+                        if c >= len(dx):
+                            polys = []
+                            break
+                        a2d = np.array([dx[c], dy[c]])
+                        ap = compute_cone_aperture_2d(a2d, scale=CONE_SCALE_2D)
+                        polys.append(Polygon(cone_wedge_polygon(
+                            a2d, ap, disk_radius=disk_radius, direction=dir_)))
+                    if len(polys) == 2:
+                        inter = polys[0].intersection(polys[1])
+                        if not inter.is_empty:
+                            geoms = (inter.geoms if inter.geom_type
+                                     == "MultiPolygon" else [inter])
+                            for g in geoms:
+                                gx, gy = g.exterior.xy
+                                fig_disk.add_trace(go.Scatter(
+                                    x=list(gx), y=list(gy),
+                                    mode="lines",
+                                    fill="toself",
+                                    fillcolor="rgba(52,152,219,0.25)",
+                                    line=dict(color="rgba(52,152,219,0.6)",
+                                              width=1),
+                                    hoverinfo="skip", showlegend=False,
+                                    name="2D cone overlap",
+                                ))
+                except ImportError as e:
+                    print(f"[blue] shapely import FAILED: {e}")
+
+                # ---- 512D shared points (green rings, drawn on top) ----
+                hi = compute_cone_highlights_512d(sel[i], dataset_name,
+                                                  scale=1.0, band=None)
+                hj = compute_cone_highlights_512d(sel[j], dataset_name,
+                                                  scale=1.0, band=None)
+                if cone_direction == "inward":
+                    set_i = set(hi["inward_512d"])
+                    set_j = set(hj["inward_512d"])
+                else:
+                    set_i = set(hi["outward_512d"])
+                    set_j = set(hj["outward_512d"])
+                shared = [k for k in (set_i & set_j) if k < len(dx)]
+                if shared:
+                    fig_disk.add_trace(go.Scatter(
+                        x=[dx[k] for k in shared],
+                        y=[dy[k] for k in shared],
+                        mode="markers",
+                        marker=dict(size=13, color="rgba(0,0,0,0)",
+                                    line=dict(width=3, color="#2ecc71")),
+                        name="Pair intersection",
+                        hoverinfo="skip", showlegend=False,
+                    ))
+
+        # ── All-cones intersection highlight (k-way) ──────────────────
+        if (mode in ("cones", "tree_cones")
+                and all_highlight
+                and len(sel) >= 2):
+            from .cone_utils import (
+                cone_wedge_polygon, compute_cone_aperture_2d, CONE_SCALE_2D
+            )
+            valid = [c for c in sel if c < len(dx)]
+            # blue area: intersection of ALL wedges
+            try:
+                from shapely.geometry import Polygon
+                dir_ = "inward" if cone_direction == "inward" else "outward"
+                polys = []
+                for c in valid:
+                    a2d = np.array([dx[c], dy[c]])
+                    ap = compute_cone_aperture_2d(a2d, scale=CONE_SCALE_2D)
+                    polys.append(Polygon(cone_wedge_polygon(
+                        a2d, ap, disk_radius=disk_radius, direction=dir_)))
+                if polys:
+                    inter = polys[0]
+                    for p in polys[1:]:
+                        inter = inter.intersection(p)
+                    if not inter.is_empty:
+                        geoms = (inter.geoms if inter.geom_type
+                                 == "MultiPolygon" else [inter])
+                        for g in geoms:
+                            gx, gy = g.exterior.xy
+                            fig_disk.add_trace(go.Scatter(
+                                x=list(gx), y=list(gy),
+                                mode="lines", fill="toself",
+                                fillcolor="rgba(52,152,219,0.30)",
+                                line=dict(color="rgba(52,152,219,0.7)",
+                                          width=1),
+                                hoverinfo="skip", showlegend=False,
+                            ))
+            except ImportError:
+                pass
+
+            # green rings: 512D intersection of ALL cones
+            sets = []
+            for c in valid:
+                hl = compute_cone_highlights_512d(c, dataset_name,
+                                                  scale=1.0, band=None)
+                key = ("inward_512d" if cone_direction == "inward"
+                       else "outward_512d")
+                sets.append(set(hl[key]))
+            if sets:
+                inter_set = sets[0]
+                for s in sets[1:]:
+                    inter_set &= s
+                shared_all = [k for k in inter_set if k < len(dx)]
+                if shared_all:
+                    fig_disk.add_trace(go.Scatter(
+                        x=[dx[k] for k in shared_all],
+                        y=[dy[k] for k in shared_all],
+                        mode="markers",
+                        marker=dict(size=14, color="rgba(0,0,0,0)",
+                                    line=dict(width=3, color="#16a085")),
+                        name="All-cones intersection",
+                        hoverinfo="skip", showlegend=False,
+                    ))
 
         return fig_disk
 
@@ -2499,10 +2645,21 @@ def register_callbacks(app: dash.Dash) -> None:
                 "marginTop": "0.5rem",
             })
 
+#######################################################################
+        # MULTI CONES
         # ── Intersection tab ─────────────────────────────────────────
+        # ── Intersection view (multi-cone, 512D, direction-aware) ────
         if active_tab == 99 and len(sel) >= 2:
-            # Compute cone data for all selected points
-            all_cone_data = []
+            CONE_LINE_COLORS = [
+                "#e67e22", "#d35400", "#f39c12", "#c0392b", "#7f2800"
+            ]
+
+            # Per-anchor: 2D members, 512D members, GT relatives —
+            # all following the current direction toggle.
+            members_2d   = []   # list[set]  (one per selected cone)
+            members_512d = []   # list[set]
+            gt_relatives = []   # list[set]
+
             for anchor_idx in sel:
                 cd = compute_cone_data(
                     anchor_idx=anchor_idx,
@@ -2511,83 +2668,267 @@ def register_callbacks(app: dash.Dash) -> None:
                     labels_2d=labels_2d,
                     dataset_name=dataset_name,
                 )
-                all_cone_data.append(cd)
+                if cone_direction == "inward":
+                    members_2d.append(set(cd["inward_indices"]))
+                    members_512d.append(set(cd["inward_512d"]))
+                    gt_relatives.append(set(cd["gt_parents"]))
+                else:
+                    members_2d.append(set(cd["outward_indices"]))
+                    members_512d.append(set(cd["outward_512d"]))
+                    gt_relatives.append(set(cd["gt_children"]))
 
-            # Compute outward cone intersection
-            outward_sets = [
-                set(cd["outward_indices"]) for cd in all_cone_data
+            rel_noun = "parents" if cone_direction == "inward" else "children"
+
+            # k-way intersections
+            inter_2d = members_2d[0].copy()
+            for s in members_2d[1:]:
+                inter_2d &= s
+            inter_512d = members_512d[0].copy()
+            for s in members_512d[1:]:
+                inter_512d &= s
+            inter_gt = gt_relatives[0].copy()
+            for s in gt_relatives[1:]:
+                inter_gt &= s
+            # GT-shared = points in the 512D intersection that are also a
+            # ground-truth relative of every anchor.
+            gt_shared = inter_512d & inter_gt
+
+            def _dot(i):
+                return html.Span(
+                    str(i + 1),
+                    style={
+                        "display": "inline-flex",
+                        "alignItems": "center",
+                        "justifyContent": "center",
+                        "width": "16px", "height": "16px",
+                        "borderRadius": "50%",
+                        "backgroundColor": CONE_LINE_COLORS[i % len(CONE_LINE_COLORS)],
+                        "color": "white",
+                        "fontSize": "0.7rem",
+                        "fontWeight": "700",
+                        "marginRight": "0.15rem",
+                        "verticalAlign": "middle",
+                    }
+                )
+
+            header_dots = html.Span(
+                [_dot(i) for i in range(len(sel))],
+                style={"marginRight": "0.4rem"}
+            )
+
+            children = [
+                html.H6(["∩ Cone Intersection  ", header_dots,
+                         f"({len(sel)} cones, {rel_noun})"],
+                        style={"margin": "0 0 0.5rem 0",
+                               "color": "#2c3e50", "fontSize": "0.9rem"}),
+                html.Hr(style={"margin": "0.3rem 0"}),
+
+                # The three shrinking quantities
+                html.P([
+                    html.Span("2D overlap: ", style={"fontWeight": "600"}),
+                    f"{len(inter_2d)} points",
+                ], style={"fontSize": "0.82rem", "color": "#495057",
+                          "margin": "0.3rem 0"}),
+                html.P([
+                    html.Span("512D overlap: ", style={"fontWeight": "600"}),
+                    f"{len(inter_512d)} points",
+                ], style={"fontSize": "0.82rem", "color": "#495057",
+                          "margin": "0.3rem 0"}),
+                html.P([
+                    html.Span("GT-shared: ", style={"fontWeight": "600"}),
+                    f"{len(gt_shared)} true shared {rel_noun}",
+                ], style={"fontSize": "0.82rem",
+                          "color": "#28a745" if gt_shared else "#dc3545",
+                          "margin": "0.3rem 0"}),
+
+                html.Button(
+                    "Show all-cones Intersection",
+                    id="show-all-overlap-btn",
+                    n_clicks=0,
+                    style={
+                        "marginTop": "0.4rem",
+                        "padding": "0.3rem 0.7rem",
+                        "fontSize": "0.78rem",
+                        "border": "1px solid #2c3e50",
+                        "borderRadius": "5px",
+                        "backgroundColor": "#2c3e50",
+                        "color": "white",
+                        "cursor": "pointer",
+                    }
+                ),
+
+                html.P(
+                    f"2D overlap is what the cones share on the disk. "
+                    f"512D overlap is what they truly share in the model's "
+                    f"geometry. GT-shared is how many of those are real common "
+                    f"{rel_noun} in the tree. When 512D overlap is high but "
+                    f"GT-shared is near zero, the cones overlap only because "
+                    f"the model places unrelated trees in the same region.",
+                    style={"fontSize": "0.72rem", "color": "#6c757d",
+                           "fontStyle": "italic", "margin": "0.4rem 0 0 0"}
+                ),
             ]
-            inward_sets = [
-                set(cd["inward_indices"]) for cd in all_cone_data
-            ]
 
-            outward_intersection = outward_sets[0]
-            for s in outward_sets[1:]:
-                outward_intersection &= s
+            # Pairwise 512D grid (only for k >= 3)
+            if len(sel) >= 3:
+                children.append(html.Hr(style={"margin": "0.5rem 0"}))
+                children.append(html.P(
+                    "Pairwise 512D overlap",
+                    style={"fontWeight": "600", "fontSize": "0.8rem",
+                           "margin": "0.3rem 0", "color": "#495057"}))
 
-            inward_intersection = inward_sets[0]
-            for s in inward_sets[1:]:
-                inward_intersection &= s
+                # header row
+                header_cells = [html.Td("", style={"padding": "0.2rem"})]
+                for j in range(len(sel)):
+                    header_cells.append(html.Td(
+                        _dot(j),
+                        style={"padding": "0.2rem", "textAlign": "center"}
+                    ))
+                rows = [html.Tr(header_cells)]
 
-            # GT children intersection
-            gt_children_sets = [
-                set(cd["gt_children"]) for cd in all_cone_data
-            ]
-            gt_children_union = set()
-            for s in gt_children_sets:
-                gt_children_union |= s
-            gt_in_outward = gt_children_union & outward_intersection
+                for i in range(len(sel)):
+                    cells = [html.Td(
+                        _dot(i),
+                        style={"padding": "0.2rem", "textAlign": "center"}
+                    )]
+                    for j in range(len(sel)):
+                        if i == j:
+                            txt = "—"
+                            bg = "#f1f3f5"
+                        else:
+                            n = len(members_512d[i] & members_512d[j])
+                            txt = str(n)
+                            bg = "#fde8d8" if n > 0 else "#f8f9fa"
+                        if i == j:
+                            cells.append(html.Td(
+                                txt,
+                                style={"padding": "0.25rem 0.4rem",
+                                       "textAlign": "center",
+                                       "fontSize": "0.78rem",
+                                       "backgroundColor": bg,
+                                       "border": "1px solid #e9ecef"}
+                            ))
+                        else:
+                            cells.append(html.Td(
+                                txt,
+                                id={"type": "pair-cell",
+                                    "i": min(i, j), "j": max(i, j)},
+                                n_clicks=0,
+                                style={"padding": "0.25rem 0.4rem",
+                                       "textAlign": "center",
+                                       "fontSize": "0.78rem",
+                                       "backgroundColor": bg,
+                                       "border": "1px solid #e9ecef",
+                                       "cursor": "pointer"}
+                            ))
+                    rows.append(html.Tr(cells))
+
+                children.append(html.Table(
+                    [html.Tbody(rows)],
+                    style={"borderCollapse": "collapse", "margin": "0.3rem 0"}
+                ))
+                children.append(html.P(
+                    "Each cell = points shared by that pair in 512D. "
+                    "Non-zero clusters reveal which cones sit on overlapping "
+                    "branches.\n"
+                    "Click a cell to highlight that pair's overlap on the "
+                    "disk — blue area for the 2D cones, green rings for the "
+                    "true 512D shared points.",
+                    style={"fontSize": "0.72rem", "color": "#6c757d",
+                           "fontStyle": "italic", "margin": "0.3rem 0 0 0"}
+                ))
+
+            return html.Div(children)
+        
+        # ── Both-direction tabs (single cone) ────────────────────────
+        if active_tab in ("out", "in") and len(sel) == 1:
+            anchor_idx = sel[0]
+            cd = compute_cone_data(
+                anchor_idx=anchor_idx,
+                coords_2d=coords_2d,
+                points=points,
+                labels_2d=labels_2d,
+                dataset_name=dataset_name,
+            )
+            anchor_type = cd["anchor_type"]
+            anchor_norm = cd["anchor_norm"]
+            aperture    = cd["aperture_deg"]
+            gt_children = cd["gt_children"]
+            gt_parents  = cd["gt_parents"]
+            outward_idx = cd["outward_indices"]
+            inward_idx  = cd["inward_indices"]
+            type_color  = type_colors.get(anchor_type, "#6c757d")
+
+            if active_tab == "out":
+                cov_gt, cov_cone, cov_noun = gt_children, outward_idx, "children"
+                sect_title, sect_arrow = "↓ Children", "outward"
+                gt_list, inside_set = gt_children, set(outward_idx)
+                accent = "#e67e22"
+            else:  # "in"
+                cov_gt, cov_cone, cov_noun = gt_parents, inward_idx, "parents"
+                sect_title, sect_arrow = "↑ Parents", "inward"
+                gt_list, inside_set = gt_parents, set(inward_idx)
+                accent = "#377eb8"
+
+            cov_hits = len(set(cov_gt) & set(cov_cone))
+            coverage_pct = (cov_hits / len(cov_gt) * 100) if cov_gt else 0.0
+            coverage_color = (
+                "#28a745" if coverage_pct >= 60 else
+                "#ffc107" if coverage_pct >= 30 else
+                "#dc3545"
+            )
 
             return html.Div([
                 umap_warning,
-                html.H6("∩ Cone Intersection",
-                        style={"margin": "0 0 0.5rem 0",
-                               "color": "#2c3e50"}),
+                html.Div([
+                    html.Span(
+                        anchor_type.replace("_", " ").title(),
+                        style={"backgroundColor": type_color, "color": "white",
+                               "padding": "0.2rem 0.5rem", "borderRadius": "4px",
+                               "fontSize": "0.8rem", "marginRight": "0.5rem"}
+                    ),
+                    html.Span(f"norm: {anchor_norm:.3f}",
+                              style={"fontSize": "0.8rem", "color": "#6c757d"}),
+                ], style={"marginBottom": "0.3rem"}),
+
+                html.P(f"Aperture: {aperture:.1f}°",
+                       style={"margin": "0 0 0.5rem 0", "fontSize": "0.85rem",
+                              "color": "#495057"}),
+
                 html.Hr(style={"margin": "0.3rem 0"}),
 
-                html.P("Outward cone intersection:",
-                       style={"fontSize": "0.8rem", "fontWeight": "600",
-                               "margin": "0.5rem 0 0.2rem 0",
-                               "color": "#495057"}),
-                html.P(
-                    f"{len(outward_intersection)} points inside ALL "
-                    f"{len(sel)} outward cones simultaneously",
-                    style={"fontSize": "0.8rem", "color": "#6c757d",
-                           "margin": "0"}
-                ),
-
-                html.P("Inward cone intersection:",
-                       style={"fontSize": "0.8rem", "fontWeight": "600",
-                               "margin": "0.5rem 0 0.2rem 0",
-                               "color": "#495057"}),
-                html.P(
-                    f"{len(inward_intersection)} points inside ALL "
-                    f"{len(sel)} inward cones simultaneously",
-                    style={"fontSize": "0.8rem", "color": "#6c757d",
-                           "margin": "0"}
-                ),
-
-                html.Hr(style={"margin": "0.5rem 0"}),
-
-                html.P("GT children in outward intersection:",
-                       style={"fontSize": "0.8rem", "fontWeight": "600",
-                               "margin": "0.3rem 0 0.2rem 0",
-                               "color": "#495057"}),
-                html.Div([_point_pill(i) for i in gt_in_outward])
-                if gt_in_outward else
-                html.P("None", style={"fontSize": "0.8rem",
-                                      "color": "#6c757d",
-                                      "fontStyle": "italic"}),
-
-                html.Hr(style={"margin": "0.5rem 0"}),
+                html.H6(sect_title,
+                        style={"margin": "0.4rem 0 0.3rem 0",
+                               "color": accent, "fontSize": "0.82rem"}),
+                html.Div([_point_pill(i, inside_set) for i in gt_list])
+                if gt_list else
+                html.P(f"No {cov_noun}.",
+                       style={"color": "#6c757d", "fontStyle": "italic",
+                               "fontSize": "0.8rem", "margin": "0"}),
 
                 html.P(
-                    "Points in the intersection of all outward cones "
-                    "are concepts entailed by ALL selected anchors "
-                    "simultaneously.",
+                    f"Cone captures {len(cov_cone)} points.",
                     style={"fontSize": "0.73rem", "color": "#6c757d",
-                           "fontStyle": "italic", "margin": "0"}
+                           "margin": "0.3rem 0 0 0"}
                 ),
+
+                html.Hr(style={"margin": "0.4rem 0"}),
+
+                html.H6("Coverage",
+                        style={"margin": "0 0 0.3rem 0", "color": "#333",
+                               "fontSize": "0.82rem"}),
+                html.Div([
+                    html.Span(f"{coverage_pct:.0f}%",
+                              style={"fontSize": "1.4rem", "fontWeight": "bold",
+                                     "color": coverage_color,
+                                     "marginRight": "0.4rem"}),
+                    html.Span(
+                        f"{cov_hits}/{len(cov_gt)} GT {cov_noun} inside cone"
+                        if cov_gt else f"No {cov_noun} to evaluate",
+                        style={"fontSize": "0.78rem", "color": "#6c757d"}),
+                ]),
+
+                _pill_detail_block(pill_highlight),
             ])
 
         # ── Per-point tab ────────────────────────────────────────────
@@ -2614,7 +2955,20 @@ def register_callbacks(app: dash.Dash) -> None:
 
         type_color = type_colors.get(anchor_type, "#6c757d")
 
-        coverage_pct = coverage * 100
+        # Coverage follows the active cone direction.
+        # Outward/both -> children inside outward cone.
+        # Inward       -> parents  inside inward cone.
+        if cone_direction == "inward":
+            cov_gt   = gt_parents
+            cov_cone = inward_idx
+            cov_noun = "parents"
+        else:
+            cov_gt   = gt_children
+            cov_cone = outward_idx
+            cov_noun = "children"
+
+        cov_hits = len(set(cov_gt) & set(cov_cone))
+        coverage_pct = (cov_hits / len(cov_gt) * 100) if cov_gt else 0.0
         coverage_color = (
             "#28a745" if coverage_pct >= 60 else
             "#ffc107" if coverage_pct >= 30 else
@@ -2687,7 +3041,9 @@ def register_callbacks(app: dash.Dash) -> None:
                            "fontSize": "0.8rem", "margin": "0"}),
 
             html.P(
-                f"Cone captures {len(outward_idx)} points.",
+                f"Cone captures "
+                f"{len(inward_idx) if cone_direction == 'inward' else len(outward_idx)} "
+                f"points.",
                 style={"fontSize": "0.73rem", "color": "#6c757d",
                        "margin": "0.3rem 0 0 0"}
             ),
@@ -2709,9 +3065,8 @@ def register_callbacks(app: dash.Dash) -> None:
                     }
                 ),
                 html.Span(
-                    f"{len(set(gt_children) & set(outward_idx))}"
-                    f"/{len(gt_children)} GT children inside cone"
-                    if gt_children else "No children to evaluate",
+                    f"{cov_hits}/{len(cov_gt)} GT {cov_noun} inside cone"
+                    if cov_gt else f"No {cov_noun} to evaluate",
                     style={"fontSize": "0.78rem", "color": "#6c757d"}
                 ),
             ]),
@@ -3596,15 +3951,144 @@ def register_callbacks(app: dash.Dash) -> None:
         if clicked_idx == current:
             return None
         return clicked_idx
-    
+  
 #####################################################################################
-# clear the highlight when the anchor selection changes
+    @app.callback(
+        Output("cone-tab-bar", "children"),
+        Input("sel", "data"),
+        Input("cone-active-tab", "data"),
+        Input("mode", "data"),
+        Input("cone-direction", "data"),
+    )
+    def _update_cone_tabs(sel, active_tab, mode, cone_direction):
+        if mode not in ("cones", "tree_cones") or not sel:
+            return []
+
+        CONE_LINE_COLORS = [
+            "#e67e22", "#d35400", "#f39c12", "#c0392b", "#7f2800"
+        ]
+
+        def _tab_btn(label, tab_id, color, is_active):
+            return html.Button(
+                label,
+                id={"type": "cone-tab", "index": tab_id},
+                n_clicks=0,
+                style={
+                    "padding": "0.25rem 0.6rem",
+                    "borderRadius": "5px",
+                    "border": (f"2px solid {color}" if is_active
+                               else "2px solid transparent"),
+                    "backgroundColor": color,
+                    "color": "white",
+                    "cursor": "pointer",
+                    "fontSize": "0.78rem",
+                    "fontWeight": "600" if is_active else "400",
+                    "opacity": "1" if is_active else "0.6",
+                    "transition": "opacity 0.15s, border 0.15s",
+                }
+            )
+
+        # Single cone + both directions → Outward / Inward tabs
+        if len(sel) == 1 and cone_direction == "both":
+            return [
+                _tab_btn("↓ Outward", "out", "#e67e22", active_tab == "out"),
+                _tab_btn("↑ Inward", "in", "#377eb8", active_tab == "in"),
+            ]
+
+        # Multi-cone → per-cone tabs + intersection
+        tabs = []
+        for i in range(len(sel)):
+            color = CONE_LINE_COLORS[i % len(CONE_LINE_COLORS)]
+            tabs.append(_tab_btn(f"Cone {i + 1}", i, color, active_tab == i))
+        if len(sel) >= 2:
+            tabs.append(_tab_btn("∩ Intersection", 99, "#2c3e50",
+                                 active_tab == 99))
+        return tabs
+
+#####################################################################################
+    #####################################################################################
+    @app.callback(
+        Output("cone-active-tab", "data"),
+        Input({"type": "cone-tab", "index": dash.ALL}, "n_clicks"),
+        Input("sel", "data"),
+        Input("cone-direction", "data"),
+        prevent_initial_call=True,
+    )
+    def _set_active_cone_tab(tab_clicks, sel, cone_direction):
+        ctx = callback_context
+        if not ctx.triggered:
+            return dash.no_update
+
+        trig = ctx.triggered_id
+
+        # Selection or direction changed → auto-pick default tab
+        if trig in ("sel", "cone-direction"):
+            if sel and len(sel) == 1 and cone_direction == "both":
+                return "out"            # default to Outward tab
+            if sel and len(sel) >= 2:
+                return 99               # multi → intersection
+            return 0                    # single → cone 1
+
+        # A tab button was clicked
+        if isinstance(trig, dict) and trig.get("type") == "cone-tab":
+            if not any(tab_clicks):
+                return dash.no_update
+            return trig.get("index")
+
+        return dash.no_update
+
+
+#####################################################################################
+    # To click the pair of intersected cones in the matrix
+    @app.callback(
+        Output("pair-highlight", "data"),
+        Input({"type": "pair-cell", "i": dash.ALL, "j": dash.ALL}, "n_clicks"),
+        State("pair-highlight", "data"),
+        prevent_initial_call=True,
+    )
+    def _highlight_pair(n_clicks_list, current):
+        ctx = callback_context
+        if not ctx.triggered or not ctx.triggered_id:
+            return dash.no_update
+        if not any(n_clicks_list):
+            return dash.no_update
+        trig = ctx.triggered_id
+        pair = [trig.get("i"), trig.get("j")]
+        if current == pair:        # toggle off
+            return None
+        return pair
+
+#############################################################################
+# Clear the pair of intersection when reselct (or for global Intersec)
     @app.callback(
         Output("pill-highlight", "data", allow_duplicate=True),
+        Output("pair-highlight", "data", allow_duplicate=True),
+        Output("all-highlight", "data", allow_duplicate=True),
         Input("sel", "data"),
         prevent_initial_call=True,
     )
     def _clear_pill_on_reselect(sel):
-        return None
-    
-    # End of callbacks
+        return None, None
+
+#####################################################################################
+   # All cone intersection 
+    @app.callback(
+        Output("all-highlight", "data"),
+        Input("show-all-overlap-btn", "n_clicks"),
+        State("all-highlight", "data"),
+        prevent_initial_call=True,
+    )
+    def _toggle_all_overlap(n_clicks, current):
+        return not current
+################################################################################ 
+# CLEAR CONES 
+    @app.callback(
+        Output("sel", "data", allow_duplicate=True),
+        Input("clear-cones-btn", "n_clicks"),
+        prevent_initial_call=True,
+    )
+    def _clear_cones(n_clicks):
+        if n_clicks:
+            return []
+        return dash.no_update
+# End callbacks

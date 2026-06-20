@@ -4296,7 +4296,7 @@ def register_callbacks(app: dash.Dash) -> None:
         prevent_initial_call=True,
     )
     def _clear_pill_on_reselect(sel):
-        return None, None
+        return None, None, False
 
 #####################################################################################
    # All cone intersection 

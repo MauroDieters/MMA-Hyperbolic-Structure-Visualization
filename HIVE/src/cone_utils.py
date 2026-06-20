@@ -1,9 +1,9 @@
 
 ############################# HIVE-C EXTENSION ###############################
 
+import json
 import torch
 import numpy as np
-import json
 import pickle
 from pathlib import Path
 from . import lorentz as L

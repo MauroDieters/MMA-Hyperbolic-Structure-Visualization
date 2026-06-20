@@ -1,5 +1,5 @@
-from dash import dcc, html
 
+from dash import dcc, html
 
 def _compare_plot(title: str, graph_id: str, filename: str, panel_id: str | None = None) -> html.Div:
     """One projection panel inside the Compare grid (fills its grid cell).

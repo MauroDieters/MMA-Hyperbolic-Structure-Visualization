@@ -113,6 +113,7 @@ def cone_aperture(x: Tensor, curv: float | Tensor = 1.0,
                   scale: float = 1.0, eps: float = 1e-8) -> Tensor:
     """
     Compute the entailment cone aperture angle for points in Lorentz space.
+    (Operates on Lorentz-space components, not Poincaré)
 
     The aperture angle ψ(x) defines how wide the entailment cone is at point x.
     Points closer to the origin (general concepts) have wider cones.
@@ -136,7 +137,7 @@ def cone_aperture(x: Tensor, curv: float | Tensor = 1.0,
         Tensor of shape (B,) giving aperture angles in radians.
     """
     # Compute time component: x0 = sqrt(1/curv + ||x_space||^2)
-    x_time = torch.sqrt(1.0 / curv + torch.sum(x**2, dim=-1))
+    x_time = torch.sqrt(1.0 / curv + torch.sum(x**2, dim=-1)) # x0
 
     # Hyperbolic norm = arccosh(x0)
     hyperbolic_norm = torch.acosh(
@@ -150,21 +151,20 @@ def cone_aperture(x: Tensor, curv: float | Tensor = 1.0,
     )
 
     ratio = torch.clamp(
-        sinh_scale / torch.clamp(sinh_norm, min=eps),
+        sinh_scale / torch.clamp(sinh_norm, min=eps), # Avoid zero division
         min=-1.0,
         max=1.0
-    )
+    ) # arcsin defined in [-1,1]
     aperture = torch.asin(ratio)
 
     return aperture
 
+########## HELPERS
 #-----------------------------------------------------------------------
 def cone_aperture_degrees(x: Tensor, curv: float | Tensor = 1.0,
                           scale: float = 5.0, eps: float = 1e-8) -> Tensor:
     """
-    Convenience wrapper returning cone aperture in degrees.
-    Uses scale=5.0 as default, calibrated for HyCoCLIP 2D projections.
-    
+    Helper function returning cone aperture in degrees.    
     Args:
         x: Tensor of shape (B, D) giving Lorentz space components.
         curv: Curvature parameter.
@@ -179,7 +179,7 @@ def cone_aperture_degrees(x: Tensor, curv: float | Tensor = 1.0,
 #-----------------------------------------------------------------------
 def lorentz_norm(x: Tensor, curv: float | Tensor = 1.0, eps: float = 1e-8) -> Tensor:
     """
-    Compute the Lorentz norm of points.
+    Compute the Lorentz norm of points. HYPERBOLIC
     ||x||_L = sqrt(-<x,x>_L) = sqrt(x_time^2 - ||x_space||^2 - 1/curv... )
     
     For points on the hyperboloid: <x,x>_L = -1/curv
@@ -197,8 +197,9 @@ def lorentz_norm(x: Tensor, curv: float | Tensor = 1.0, eps: float = 1e-8) -> Te
         Tensor of shape (B,) giving Lorentz norms
     """
     x_time = torch.sqrt(1.0 / curv + torch.sum(x**2, dim=-1))
-    return torch.acosh(torch.clamp(x_time * curv**0.5, min=1.0 + eps))
+    return torch.acosh(torch.clamp(x_time * curv**0.5, min=1.0 + eps)) # arccosh(z) is only defined for z ≥ 1
 
+################## FOR POINCARE
 #-----------------------------------------------------------------------
 def is_inside_cone(
     x: Tensor,
@@ -222,7 +223,7 @@ def is_inside_cone(
     x_norm = torch.norm(x).clamp(min=eps)
 
     # outward radial direction at the anchor (origin -> anchor)
-    radial_dir = x / x_norm                      # shape (2,)
+    radial_dir = x / x_norm # shape (2,)
 
     # direction from anchor to each candidate
     delta = candidates - x.unsqueeze(0)          # shape (N, 2)
@@ -230,7 +231,7 @@ def is_inside_cone(
     delta_dir = delta / delta_norm.unsqueeze(1)
 
     cos_angle = (delta_dir @ radial_dir).clamp(-1.0, 1.0)
-    angle = torch.acos(cos_angle)                # angle AT the anchor
+    angle = torch.acos(cos_angle) # angle AT the anchor
 
     cand_norm = torch.norm(candidates, dim=-1)
     further_out = cand_norm > x_norm
@@ -271,108 +272,17 @@ def is_inside_cone_inward(
 
     return closer_in & within_angle
 
-#-----------------------------------------------------------------------
-def is_inside_cone_lorentz(
-    x: Tensor,
-    candidates: Tensor,
-    curv: float | Tensor = 1.0,
-    scale: float = 1.0,
-    eps: float = 1e-8
-) -> Tensor:
-    """
-    OUTWARD cone — finds children (more specific than x).
-    Works directly with high-dimensional Lorentz space components.
-
-    y is a child of x if:
-    1. -<x,y>_L >= ||x||_L * cosh(ψ(x))  [large inner product = far apart in right direction]
-    2. hyperbolic_norm(y) > hyperbolic_norm(x)  [y is further from origin]
-    """
-    psi = cone_aperture(x.unsqueeze(0), curv, scale, eps).squeeze(0)
-
-    x_time = torch.sqrt(1.0 / curv + torch.sum(x**2))
-    candidates_time = torch.sqrt(
-        1.0 / curv + torch.sum(candidates**2, dim=-1)
-    )
-    spatial_dot = candidates @ x
-    lorentz_inner = spatial_dot - x_time * candidates_time
-
-    x_lorentz_norm = torch.acosh(
-        torch.clamp(x_time * curv**0.5, min=1.0 + eps)
-    )
-
-    lhs = -lorentz_inner
-    rhs = x_lorentz_norm * torch.cosh(psi)
-
-    x_hyp_norm = x_lorentz_norm
-    candidates_hyp_norm = torch.acosh(
-        torch.clamp(candidates_time * curv**0.5, min=1.0 + eps)
-    )
-    further_out = candidates_hyp_norm > x_hyp_norm
-
-    # FIXED: lhs >= rhs for outward (children are further, higher lhs)
-    inside = (lhs >= rhs) & further_out
-
-    return inside
-
-#-----------------------------------------------------------------------
-def is_inside_cone_inward_lorentz(
-    x: Tensor,
-    candidates: Tensor,
-    curv: float | Tensor = 1.0,
-    scale: float = 1.0,
-    eps: float = 1e-8
-) -> Tensor:
-    """
-    INWARD cone — finds parents (more general than x).
-    y is a parent of x if x falls inside y's outward cone.
-    Uses each candidate y's own aperture ψ(y).
-    """
-    # Compute aperture for each candidate y
-    psi_candidates = cone_aperture(candidates, curv, scale, eps)  # shape (N,)
-
-    x_time = torch.sqrt(1.0 / curv + torch.sum(x**2))
-    candidates_time = torch.sqrt(
-        1.0 / curv + torch.sum(candidates**2, dim=-1)
-    )
-
-    # Lorentz inner product <y, x>_L for each candidate y
-    spatial_dot = candidates @ x
-    lorentz_inner = spatial_dot - candidates_time * x_time
-
-    # Lorentz norm of each candidate y
-    candidates_lorentz_norm = torch.acosh(
-        torch.clamp(candidates_time * curv**0.5, min=1.0 + eps)
-    )
-
-    lhs = -lorentz_inner                                    # shape (N,)
-    rhs = candidates_lorentz_norm * torch.cosh(psi_candidates)  # shape (N,)
-
-    # x must be further out than y (x is more specific)
-    x_hyp_norm = torch.acosh(
-        torch.clamp(x_time * curv**0.5, min=1.0 + eps)
-    )
-    candidates_hyp_norm = torch.acosh(
-        torch.clamp(candidates_time * curv**0.5, min=1.0 + eps)
-    )
-    x_further = x_hyp_norm > candidates_hyp_norm
-
-    # y entails x if x is in y's outward cone
-    # i.e. lhs >= rhs AND x is further out than y
-    inside = (lhs >= rhs) & x_further
-
-    return inside
 
 #-----------------------------------------------------------------------
 
-
-##### THIS WAS JUST USED FOR A TEST #####
+################# For true dimensions
 def cone_members_truncated_lorentz(
     x: Tensor,
     candidates: Tensor,
     curv: float | Tensor = 1.0,
     scale: float = 1.0,
     direction: str = "outward",
-    band: float = 0.5,
+    band: float = None,
     eps: float = 1e-8,
 ) -> Tensor:
     """
@@ -390,7 +300,9 @@ def cone_members_truncated_lorentz(
 
     band:
         Maximum allowed hyperbolic distance between x and y for membership.
-        Smaller band = stricter = higher precision, lower recall.
+        Smaller band = stricter = higher precision, lower recall. (this was for an experiment we did)
+
+    Membership inequality: −⟨x,y⟩_L  ≥  ‖x‖_H · cosh(ψ)
 
     Args:
         x:          Tensor (D,)   anchor, Lorentz space components.
@@ -422,10 +334,10 @@ def cone_members_truncated_lorentz(
 
     rhs = x_hyp * torch.cosh(psi)
 
-    # --- angular cone membership ------------------------------------------
-    angular = lhs >= rhs
+    # 1) angular cone membership ------------------------------------------
+    angular = lhs >= rhs / 2.0
 
-    # --- radial direction filter ------------------------------------------
+    # 2) radial direction filter ------------------------------------------
     if direction == "outward":
         radial = cand_hyp > x_hyp        # children: further out
     else:

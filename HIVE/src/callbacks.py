@@ -645,6 +645,20 @@ def register_callbacks(app: dash.Dash) -> None:
         {"fill": "rgba(192, 57,  43, 0.20)", "line": "rgba(192, 57,  43, 0.9)"},
         {"fill": "rgba(127, 40,   0, 0.20)", "line": "rgba(127, 40,   0, 0.9)"},
     ]
+    #####################################################################################
+    @app.callback(
+        Output("cone-projection-warning", "style"),
+        Input("proj", "data"),
+        Input("mode", "data"),
+    )
+    def _update_cone_projection_warning(proj, mode):
+        base_style = {
+            "color": "#dc3545",
+            "fontSize": "0.8rem",
+            "margin": "0.5rem 0 0 0",
+        }
+        show = proj == "umap" and mode in ("cones", "tree_cones")
+        return {**base_style, "display": "block" if show else "none"}
     # Dataset loading callback
     @app.callback(
         Output("data-store", "data"),

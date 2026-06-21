@@ -20,6 +20,10 @@ LEVEL_MAP = {
 CONE_SCALE_2D = 5.0
 
 #---------------------------------------------------------------------
+def _in_unit_disk(point_2d, eps=1e-6): 
+    """True if point_2d genuinely lies inside the Poincaré disk. Helper func for """
+    return float(np.linalg.norm(point_2d)) < 1.0 - eps
+#---------------------------------------------------------------------
 def _load_hd_embeddings(dataset_name: str) -> tuple[np.ndarray, list]:
     """
     Load high-dimensional Poincaré embeddings aligned with the 2D projections.
@@ -145,6 +149,8 @@ def compute_cone_aperture_2d(
     Returns:
         Aperture angle in degrees
     """
+    if not _in_unit_disk(anchor_2d): #guard for points outside the disk
+        return None
     x = torch.tensor(anchor_2d, dtype=torch.float32).unsqueeze(0)
     x_lorentz = L.poincare_to_lorentz(x)
     aperture_rad = L.cone_aperture(x_lorentz, scale=scale).squeeze(0)
@@ -171,6 +177,8 @@ def compute_cone_members_2d(
         outward_indices: indices of points inside outward cone (children direction)
         inward_indices:  indices of points inside inward cone (parents direction)
     """
+    if not _in_unit_disk(anchor_2d):
+        return [], [] #guard for points outside the disk
     x = torch.tensor(anchor_2d, dtype=torch.float32)
     candidates = torch.tensor(all_coords_2d, dtype=torch.float32)
 
@@ -247,22 +255,22 @@ def compute_cone_data(
     anchor_2d = coords_2d[anchor_idx]
     anchor_type = labels_2d[anchor_idx] if anchor_idx < len(labels_2d) else ""
     anchor_norm = float(np.linalg.norm(anchor_2d))
+    out_of_disk = anchor_norm >= 1.0 - 1e-6
 
     # Compute aperture angle
-    aperture_deg = compute_cone_aperture_2d(anchor_2d, scale=scale)
+    aperture_deg = compute_cone_aperture_2d(anchor_2d, scale=scale) #none if outside disk
 
     # Find geometric cone members in 2D
     outward_indices, inward_indices = compute_cone_members_2d(
         anchor_2d, coords_2d, scale=scale
     )
-
     # Get ground truth relatives from tree structure
     gt_children, gt_parents = _get_gt_relatives(
         anchor_idx, points, labels_2d, dataset_name
     )
 
     # Coverage metric (vs 2D geometric cone, kept for comparison)
-    coverage = compute_coverage(anchor_idx, gt_children, outward_indices)
+    coverage = None if out_of_disk else compute_coverage(anchor_idx, gt_children, outward_indices)
 
     # 512D geometric cone membership (the meaningful one)
     hl = compute_cone_highlights_512d(
@@ -289,6 +297,7 @@ def compute_cone_data(
           f"gt_children={gt_children} "
           f"gt_children_in_2d_cone={set(gt_children) & set(outward_indices)}")
     return {
+        "out_of_disk": out_of_disk,
         "aperture_deg": aperture_deg,
         "anchor_type": anchor_type,
         "anchor_norm": anchor_norm,

@@ -597,7 +597,9 @@ def _add_cones_to_fig(fig, dx, dy, sel, cone_direction, mode, dataset_name,
             continue
         color = cone_colors[i % len(cone_colors)]
         anchor_2d = np.array([dx[anchor_idx], dy[anchor_idx]])
-        ap = compute_cone_aperture_2d(anchor_2d, scale=CONE_SCALE_2D)
+        ap = compute_cone_aperture_2d(anchor_2d, scale=CONE_SCALE_2D) #aperture degree
+        if ap is None:
+            continue   # out-of-disk anchor
         if cone_direction in ("outward", "both"):
             shapes.append(dict(type="path",
                 path=compute_cone_wedge_path(anchor_2d, ap, disk_radius=disk_radius),
@@ -1374,6 +1376,8 @@ def register_callbacks(app: dash.Dash) -> None:
                 anchor_2d = np.array([dx[anchor_idx], dy[anchor_idx]])
                 aperture_deg = compute_cone_aperture_2d(
                     anchor_2d, scale=CONE_SCALE_2D)
+                if aperture_deg is None:
+                    continue   # out-of-disk anchor (UMAP)
 
                 if cone_direction in ("outward", "both"):
                     shapes.append(dict(
@@ -2876,6 +2880,14 @@ def register_callbacks(app: dash.Dash) -> None:
                     labels_2d=labels_2d,
                     dataset_name=dataset_name,
                 )
+                if cd["out_of_disk"]:
+                    return html.Div([
+                        umap_warning,
+                        html.P("This point's 2D position lies outside the unit disk "
+                            "(this projection isn't hyperbolic), so cone aperture, "
+                            "coverage, precision and trained-recall are undefined here.",
+                            style={"color": "#856404", "fontSize": "0.8rem"}),
+                    ])
                 if cone_direction == "inward":
                     members_2d.append(set(cd["inward_indices"]))
                     members_512d.append(set(cd["inward_512d"]))

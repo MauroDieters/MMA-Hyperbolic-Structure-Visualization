@@ -503,7 +503,7 @@ html.Div([
         ], style={"display": "flex", "gap": "0.5rem", "marginBottom": "0.5rem"}),
         html.P(
             id="cone-projection-warning",
-            children="⚠️ UMAP is Euclidean — cone wedges don't carry hyperbolic meaning. 512D highlights are still valid.",
+            children="⚠️ UMAP is Euclidean! Cone wedges don't carry hyperbolic meaning. 512D highlights are still valid.",
             style={
                 "color": "#dc3545",
                 "fontSize": "0.8rem",

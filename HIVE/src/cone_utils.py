@@ -218,7 +218,22 @@ def compute_coverage(
     cone_set = set(outward_indices_2d)
     overlap = gt_set & cone_set
     return len(overlap) / len(gt_set)
-
+#---------------------------------------------------------------------
+def compute_knn_recall_2d(anchor_idx, coords_2d, gt_relatives, k=None):
+    """
+    Euclidean k-NN analogue of cone coverage — for projections (e.g. UMAP)
+    where the 2D cone isn't defined. Recall@k with k = |gt_relatives| by
+    default, so it's directly comparable to the cone Coverage % shown for
+    the hyperbolic projections.
+    """
+    if not gt_relatives:
+        return 0.0, []
+    k = k or len(gt_relatives)
+    anchor = coords_2d[anchor_idx]
+    dists = np.linalg.norm(coords_2d - anchor, axis=1)
+    order = [i for i in np.argsort(dists) if i != anchor_idx][:k]
+    hits = len(set(gt_relatives) & set(order))
+    return hits / len(gt_relatives), order
 #---------------------------------------------------------------------
 def compute_cone_data(
     anchor_idx: int,
@@ -252,6 +267,8 @@ def compute_cone_data(
             gt_parents      : list  - ground truth parent indices
             coverage        : float - % of gt_children inside geometric cone
     """
+    # Debug
+    # print(f"[DEBUG] compute_cone_data called, anchor_norm={float(np.linalg.norm(coords_2d[anchor_idx])):.3f}")
     anchor_2d = coords_2d[anchor_idx]
     anchor_type = labels_2d[anchor_idx] if anchor_idx < len(labels_2d) else ""
     anchor_norm = float(np.linalg.norm(anchor_2d))
@@ -292,7 +309,7 @@ def compute_cone_data(
         recall_512d = 0.0
 
     print(f"[cone_data] anchor={anchor_idx} type={anchor_type} "
-          f"aperture={aperture_deg:.1f} "
+          f"aperture={'n/a' if aperture_deg is None else f'{aperture_deg:.1f}'} "
           f"outward_2d={len(outward_indices)} "
           f"gt_children={gt_children} "
           f"gt_children_in_2d_cone={set(gt_children) & set(outward_indices)}")

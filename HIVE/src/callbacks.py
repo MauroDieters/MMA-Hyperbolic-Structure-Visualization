@@ -2,7 +2,7 @@ import dash
 from dash import Input, Output, State, callback_context, html, dcc
 import numpy as np
 import plotly.graph_objs as go
-from .cone_utils import compute_cone_highlights_512d
+from .cone_utils import compute_cone_highlights_512d, compute_knn_recall_2d
 from .projection import _interpolate_hyperbolic
 
 from .image_utils import _encode_image, _create_content_element
@@ -1546,6 +1546,9 @@ def register_callbacks(app: dash.Dash) -> None:
                             break
                         a2d = np.array([dx[c], dy[c]])
                         ap = compute_cone_aperture_2d(a2d, scale=CONE_SCALE_2D)
+                        if ap is None:
+                            polys = []
+                            break
                         polys.append(Polygon(cone_wedge_polygon(
                             a2d, ap, disk_radius=disk_radius, direction=dir_)))
                     if len(polys) == 2:
@@ -1607,6 +1610,9 @@ def register_callbacks(app: dash.Dash) -> None:
                 for c in valid:
                     a2d = np.array([dx[c], dy[c]])
                     ap = compute_cone_aperture_2d(a2d, scale=CONE_SCALE_2D)
+                    if ap is None:
+                        polys = []
+                        break
                     polys.append(Polygon(cone_wedge_polygon(
                         a2d, ap, disk_radius=disk_radius, direction=dir_)))
                 if polys:
@@ -2739,7 +2745,7 @@ def register_callbacks(app: dash.Dash) -> None:
                     "transition": "border 0.15s, box-shadow 0.15s",
                 }
             )
-        
+            
         def _precision_block(cov_gt, cone_members, cov_noun, n_pool):
             """Precision of the cone vs ground-truth relatives, with the
             random baseline and lift over chance.
@@ -2835,7 +2841,46 @@ def register_callbacks(app: dash.Dash) -> None:
                     style={"fontSize": "0.68rem", "color": "#adb5bd",
                            "fontStyle": "italic", "margin": "0.1rem 0 0 0"}),
             ])
+            
+        def _knn_recall_block(anchor_idx, coords_2d, gt_relatives, rel_noun):
+            """Euclidean k-NN analogue of Coverage, for anchors whose 2D position
+            falls outside the unit disk (e.g. UMAP) — where cone aperture and
+            cone membership are undefined. Asks the same question (how many GT
+            relatives sit "near" the anchor) using the only notion of "near"
+            this geometry actually has: plain Euclidean distance, with
+            k = |gt_relatives| so it's directly comparable to the Coverage %
+            shown for the hyperbolic projections.
+            """
+            recall, knn_idx = compute_knn_recall_2d(anchor_idx, coords_2d, gt_relatives)
+            recall_pct = recall * 100
+            hits = len(set(gt_relatives) & set(knn_idx))
+            clr = ("#28a745" if recall_pct >= 60 else
+                "#ffc107" if recall_pct >= 30 else "#dc3545")
 
+            return html.Div([
+                html.Hr(style={"margin": "0.4rem 0"}),
+                html.H6("Nearest-neighbor recall (Euclidean)",
+                        style={"margin": "0 0 0.3rem 0", "color": "#333",
+                            "fontSize": "0.82rem"}),
+                html.Div([
+                    html.Span(f"{recall_pct:.0f}%",
+                            style={"fontSize": "1.4rem", "fontWeight": "bold",
+                                    "color": clr, "marginRight": "0.4rem"}),
+                    html.Span(
+                        f"{hits}/{len(gt_relatives)} GT {rel_noun} among its "
+                        f"{len(gt_relatives)} nearest neighbors"
+                        if gt_relatives else f"No {rel_noun} to evaluate",
+                        style={"fontSize": "0.78rem", "color": "#6c757d"}),
+                ]),
+                html.P(
+                    "Cone aperture isn't defined outside the unit disk, so this "
+                    "substitutes plain 2D distance (k = number of GT relatives) "
+                    "as the nearest equivalent of Coverage for this projection.",
+                    style={"fontSize": "0.68rem", "color": "#adb5bd",
+                        "fontStyle": "italic", "margin": "0.1rem 0 0 0"}),
+            ])
+            
+            
         def _pill_detail_block(pill_idx):
             if pill_idx is None or pill_idx >= len(points):
                 return html.Div()
@@ -2880,23 +2925,34 @@ def register_callbacks(app: dash.Dash) -> None:
                     labels_2d=labels_2d,
                     dataset_name=dataset_name,
                 )
-                if cd["out_of_disk"]:
+                if cone_direction == "inward":
+                    members_2d.append(set(cd["inward_indices"]))
+                    members_512d.append(set(cd["inward_512d"]))
+                    gt_relatives.append(set(cd["gt_parents"]))
+
+                else:
+                    members_2d.append(set(cd["outward_indices"]))
+                    members_512d.append(set(cd["outward_512d"]))
+                    gt_relatives.append(set(cd["gt_children"]))
+                    
+                cds = [compute_cone_data(anchor_idx=a, coords_2d=coords_2d, points=points,
+                          labels_2d=labels_2d, dataset_name=dataset_name) for a in sel]
+                if any(c["out_of_disk"] for c in cds):
+                    rel_noun_oob = "parents" if cone_direction == "inward" else "children"
+                    blocks = [
+                        _knn_recall_block(a, coords_2d,
+                                        c["gt_parents"] if cone_direction == "inward" else c["gt_children"],
+                                        rel_noun_oob)
+                        for a, c in zip(sel, cds)
+                    ]
                     return html.Div([
                         umap_warning,
                         html.P("This point's 2D position lies outside the unit disk "
                             "(this projection isn't hyperbolic), so cone aperture, "
                             "coverage, precision and trained-recall are undefined here.",
-                            style={"color": "#856404", "fontSize": "0.8rem"}),
-                    ])
-                if cone_direction == "inward":
-                    members_2d.append(set(cd["inward_indices"]))
-                    members_512d.append(set(cd["inward_512d"]))
-                    gt_relatives.append(set(cd["gt_parents"]))
-                else:
-                    members_2d.append(set(cd["outward_indices"]))
-                    members_512d.append(set(cd["outward_512d"]))
-                    gt_relatives.append(set(cd["gt_children"]))
-
+                            style={"color": "#856404", "fontSize": "0.8rem"}),*blocks,])
+                    
+                    
             rel_noun = "parents" if cone_direction == "inward" else "children"
 
             # k-way intersections
@@ -3094,6 +3150,19 @@ def register_callbacks(app: dash.Dash) -> None:
                 sect_title, sect_arrow = "↑ Parents", "inward"
                 gt_list, inside_set = gt_parents, set(inward_idx)
                 accent = "#377eb8"
+                
+            if cd["out_of_disk"]:                                      # ← insert here
+                return html.Div([
+                    umap_warning,
+                    html.P(
+                        "This point's 2D position lies outside the unit disk (this "
+                        "projection isn't hyperbolic), so cone aperture, coverage, "
+                        "precision and trained-recall are undefined here.",
+                        style={"color": "#856404", "fontSize": "0.8rem"}
+                    ),
+                    _knn_recall_block(anchor_idx, coords_2d, cov_gt, cov_noun),
+                    _pill_detail_block(pill_highlight),
+                ])
 
             cov_hits = len(set(cov_gt) & set(cov_cone))
             coverage_pct = (cov_hits / len(cov_gt) * 100) if cov_gt else 0.0
@@ -3199,7 +3268,20 @@ def register_callbacks(app: dash.Dash) -> None:
             cov_cone = outward_idx
             cov_noun = "children"
             cov_direct = direct_children
-
+            
+        if cd["out_of_disk"]:                                          # ← insert here
+            return html.Div([
+                umap_warning,
+                html.P(
+                    "This point's 2D position lies outside the unit disk (this "
+                    "projection isn't hyperbolic), so cone aperture, coverage, "
+                    "precision and trained-recall are undefined here.",
+                    style={"color": "#856404", "fontSize": "0.8rem"}
+                ),
+                _knn_recall_block(anchor_idx, coords_2d, cov_gt, cov_noun),
+                _pill_detail_block(pill_highlight),
+            ])
+            
         cov_hits = len(set(cov_gt) & set(cov_cone))
         coverage_pct = (cov_hits / len(cov_gt) * 100) if cov_gt else 0.0
         coverage_color = (

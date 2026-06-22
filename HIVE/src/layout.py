@@ -418,6 +418,33 @@ html.Div([
             ),
         ], style={"display": "flex", "alignItems": "center",
                   "marginBottom": "0.75rem"}),
+
+        # Ground Truth Children Button-----------------------------------------------
+         html.Div([
+            html.Span("GT Children", style={
+                "color": "#e2e8f0", "fontSize": "0.82rem",
+                "marginRight": "0.5rem", "fontWeight": "500",
+            }),
+            html.Button(
+                id="show-512gt-toggle",
+                n_clicks=0,
+                children=html.Div(id = "show-512gt-knob", style={
+                    "width": "18px", "height": "18px",
+                    "backgroundColor": "white", "borderRadius": "50%",
+                    "transition": "transform 0.2s",
+                    "transform": "translateX(0px)",
+                }),
+                style={
+                    "width": "44px", "height": "24px",
+                    "backgroundColor": "#4a5568",
+                    "borderRadius": "12px", "border": "none",
+                    "cursor": "pointer", "padding": "3px",
+                    "display": "flex", "alignItems": "center",
+                    "transition": "background-color 0.2s",
+                },
+            ),
+        ], style={"display": "flex", "alignItems": "center",
+                  "marginBottom": "0.75rem"}),
         html.Label("Cone Direction:",
            style={"marginBottom": "0.5rem", "display": "block",
                   "fontWeight": "500", "color": "#e2e8f0"}),
@@ -503,7 +530,7 @@ html.Div([
         ], style={"display": "flex", "gap": "0.5rem", "marginBottom": "0.5rem"}),
         html.P(
             id="cone-projection-warning",
-            children="⚠️ UMAP is Euclidean! Cone wedges don't carry hyperbolic meaning. 512D highlights are still valid.",
+            children="⚠️ UMAP is Euclidean — cone wedges don't carry hyperbolic meaning. 512D highlights are still valid.",
             style={
                 "color": "#dc3545",
                 "fontSize": "0.8rem",
@@ -527,6 +554,7 @@ html.Div([
         },
     )
 
+################################# CENTER _______________________________________________________________
 def _centre_panel() -> html.Div:
     return html.Div(
         id="centre-panel",
@@ -648,6 +676,8 @@ def _tree_node(title: str, content: html.Div, is_current: bool = False) -> html.
         "boxShadow": "0 1px 3px rgba(0,0,0,0.1)",
     })
 
+
+################################# RIGHT _______________________________________________________________
 def _cmp_panel() -> html.Div:
     return html.Div(
         id="right-panel",
@@ -656,6 +686,7 @@ def _cmp_panel() -> html.Div:
             html.Div(id="cmp-instructions"),
             html.Div(
                 [
+                    # TREE PANEL_------------------------------------------------------------
                     html.H5(
                         "Tree Traversal",
                         style={
@@ -700,6 +731,7 @@ def _cmp_panel() -> html.Div:
                 id="tree-traversal-section",
                 style={"display": "none"},
             ),
+            #----------------------------- CONE PANEL
             html.Div(
                     id="cone-panel",
                     style={"display": "none"},
@@ -746,6 +778,8 @@ def _cmp_panel() -> html.Div:
             "flexShrink": 0,
             "overflowY": "auto",
         },
+
+        
     )
 
 
@@ -787,6 +821,7 @@ def make_layout() -> html.Div:
             dcc.Store(id="cone-active-tab", data=0),
             dcc.Store(id="cone-multi-mode", data=False),
             dcc.Store(id="show-512d", data=False),
+            dcc.Store(id="show-512gt", data=False),
             dcc.Store(id="pill-highlight", data=None),
             dcc.Store(id="pair-highlight", data=None),
             dcc.Store(id="all-highlight", data=False),

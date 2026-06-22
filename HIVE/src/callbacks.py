@@ -2,7 +2,7 @@ import dash
 from dash import Input, Output, State, callback_context, html, dcc
 import numpy as np
 import plotly.graph_objs as go
-from .cone_utils import compute_cone_highlights_512d, compute_knn_recall_2d
+from .cone_utils import compute_cone_highlights_512d
 from .projection import _interpolate_hyperbolic
 
 from .image_utils import _encode_image, _create_content_element
@@ -14,6 +14,7 @@ from .layout import (
     VIEW_BTN_INACTIVE,
 )
 import json
+#import pickle
 
 
 # Order in which the projection buttons / compare-panel styles are emitted by the
@@ -21,6 +22,8 @@ import json
 PROJ_BTN_ORDER = ["horopca", "cosne", "umap", "trimap"]
 
 
+####################################################################################3
+# Helper Functions
 def _proj_btn_styles(active_keys):
     """Style dicts for the four projection buttons, green when active.
 
@@ -94,10 +97,7 @@ def _create_hover_text(idx, points=None, meta=None):
     # Fallback - just show the index
     return f"Point {idx}"
 
-# All callback functions and register_callbacks go here
-# ... (move all @app.callback functions and register_callbacks from main.py) ... 
-#-------------------------------------------------------------------------------------
-
+#--------------------------------------------------------------------------------------------------
 def _create_simple_scatter(x, y, labels, target_names, emb_labels, title, points=None, meta=None):
     """Create a simple scatter plot without interactions for comparison views"""
     # Define colors matching plotting_utils.py
@@ -105,7 +105,7 @@ def _create_simple_scatter(x, y, labels, target_names, emb_labels, title, points
         'parent_text':  '#e41a1c',   # red
     'child_text':   '#377eb8',   # blue  
     'child_image':  '#4daf4a',   # green
-    'parent_image': '#984ea3',   # purple
+    'parent_image': '#ff96b2',   # purple
     }
     
     traces = []
@@ -186,7 +186,7 @@ def _create_interactive_scatter(x, y, labels, target_names, emb_labels, title, s
         'parent_text':  '#e41a1c',   # red
     'child_text':   '#377eb8',   # blue  
     'child_image':  '#4daf4a',   # green
-    'parent_image': '#984ea3',   # purple
+    'parent_image': '#ff96b2',   # purple
     }
     
     traces = []
@@ -291,7 +291,7 @@ def _create_full_interactive_scatter(x, y, labels, target_names, emb_labels, tit
         'parent_text':  '#e41a1c',   # red
     'child_text':   '#377eb8',   # blue  
     'child_image':  '#4daf4a',   # green
-    'parent_image': '#984ea3',   # purple
+    'parent_image': '#ff96b2',   # πινκ
     }
     
     traces = []
@@ -576,8 +576,9 @@ def _create_full_interactive_scatter(x, y, labels, target_names, emb_labels, tit
 
 #-------------------------------------------------------------------------------------
 def _add_cones_to_fig(fig, dx, dy, sel, cone_direction, mode, dataset_name,
-                      show_512d, cone_colors, disk_radius):
-    """Draw entailment-cone wedges (+ optional 512D rings) onto a compare-panel fig.
+                      show_512d, show_512gt, cone_colors, disk_radius):
+    """
+    Draw entailment-cone wedges (+ optional 512D rings) onto a compare-panel fig.
 
     Mirrors the single-disk cone overlay so cones also appear in Dual/Grid view.
     ``dx``/``dy`` are THIS projection's 2D coords (wedge placed per panel); the
@@ -597,48 +598,25 @@ def _add_cones_to_fig(fig, dx, dy, sel, cone_direction, mode, dataset_name,
             continue
         color = cone_colors[i % len(cone_colors)]
         anchor_2d = np.array([dx[anchor_idx], dy[anchor_idx]])
-        ap = compute_cone_aperture_2d(anchor_2d, scale=CONE_SCALE_2D) #aperture degree
-        if ap is None:
-            continue   # out-of-disk anchor
+        ap = compute_cone_aperture_2d(anchor_2d, scale=CONE_SCALE_2D)
         if cone_direction in ("outward", "both"):
             shapes.append(dict(type="path",
                 path=compute_cone_wedge_path(anchor_2d, ap, disk_radius=disk_radius),
                 fillcolor=color["fill"], line=dict(color=color["line"], width=1.5),
-                layer="below"))
+                layer="below")) 
         if cone_direction in ("inward", "both"):
             shapes.append(dict(type="path",
                 path=compute_inward_cone_wedge_path(anchor_2d, ap, disk_radius=disk_radius),
                 fillcolor=color["fill"], line=dict(color=color["line"], width=1.5, dash="dot"),
                 layer="below"))
     fig.update_layout(shapes=shapes)
+##########################################################################################################
 
-    if show_512d:
-        hl_out, hl_in = [], []
-        for anchor_idx in sel:
-            if anchor_idx >= len(dx):
-                continue
-            hl = compute_cone_highlights_512d(anchor_idx=anchor_idx,
-                                              dataset_name=dataset_name, scale=1.0, band=None)
-            if cone_direction in ("outward", "both"):
-                hl_out += hl["outward_512d"]
-            if cone_direction in ("inward", "both"):
-                hl_in += hl["inward_512d"]
-        hl_out = [i for i in set(hl_out) if i < len(dx) and i not in sel]
-        hl_in = [i for i in set(hl_in) if i < len(dx) and i not in sel]
-        if hl_out:
-            fig.add_trace(go.Scatter(x=[dx[i] for i in hl_out], y=[dy[i] for i in hl_out],
-                mode="markers", marker=dict(size=11, color="rgba(0,0,0,0)",
-                line=dict(width=2, color="#9b59b6")),
-                name="512D outward cone", hoverinfo="skip", showlegend=True))
-        if hl_in:
-            fig.add_trace(go.Scatter(x=[dx[i] for i in hl_in], y=[dy[i] for i in hl_in],
-                mode="markers", marker=dict(size=11, color="rgba(0,0,0,0)",
-                line=dict(width=2, color="#d7bde2")),
-                name="512D inward cone", hoverinfo="skip", showlegend=True))
-    return fig
-
-
-#-------------------------------------------------------------------------------------
+#-----------------------------------------------------------------------------------#
+#####################################################################################
+################################### CALLBACKS########################################
+#####################################################################################
+#-----------------------------------------------------------------------------------#
 def register_callbacks(app: dash.Dash) -> None:
     CONE_COLORS = [
         {"fill": "rgba(230, 126, 34, 0.20)", "line": "rgba(230, 126, 34, 0.9)"},
@@ -647,21 +625,7 @@ def register_callbacks(app: dash.Dash) -> None:
         {"fill": "rgba(192, 57,  43, 0.20)", "line": "rgba(192, 57,  43, 0.9)"},
         {"fill": "rgba(127, 40,   0, 0.20)", "line": "rgba(127, 40,   0, 0.9)"},
     ]
-    #####################################################################################
-    @app.callback(
-        Output("cone-projection-warning", "style"),
-        Input("proj", "data"),
-        Input("mode", "data"),
-    )
-    def _update_cone_projection_warning(proj, mode):
-        base_style = {
-            "color": "#dc3545",
-            "fontSize": "0.8rem",
-            "margin": "0.5rem 0 0 0",
-        }
-        show = proj == "umap" and mode in ("cones", "tree_cones")
-        return {**base_style, "display": "block" if show else "none"}
-    # Dataset loading callback
+    # Dataset loading callback, is triggered immediately
     @app.callback(
         Output("data-store", "data"),
         Output("labels-store", "data"),
@@ -681,6 +645,7 @@ def register_callbacks(app: dash.Dash) -> None:
     def _update_dataset_stores(dataset_name, projection_method, current_sel):
         if not dataset_name or not projection_method:
             return dash.no_update
+        # IMAGENET ----------------------------------------------------------------------
         if dataset_name == "imagenet":
             try:
                 import pickle
@@ -789,6 +754,7 @@ def register_callbacks(app: dash.Dash) -> None:
                 None,
                 embeddings.tolist(),  # emb store - this is what the scatter callback needs!
             )
+        # GRIT ----------------------------------------------------------------------------------------
         if dataset_name == "grit":
             try:
                 import pickle
@@ -912,28 +878,31 @@ def register_callbacks(app: dash.Dash) -> None:
 ############################ CALLBACKS #############################################
     @app.callback(
         Output("scatter-disk", "figure"),
-        Input("emb", "data"),
-        Input("sel", "data"),
-        Input("proj", "data"),
-        Input("interpolated-point", "data"),
-        Input("cone-direction", "data"),
+        Input("emb", "data"), #------
+        Input("sel", "data"), #------
+        Input("proj", "data"), #------
+        Input("interpolated-point", "data"), #------
+        Input("cone-direction", "data"), #------
         State("labels-store", "data"),
         State("target-names-store", "data"),
-        Input("mode", "data"),
-        Input("neighbors-slider", "value"),
+        Input("mode", "data"), #------
+        Input("neighbors-slider", "value"), #------
         State("data-store", "data"),
-        Input("dataset-dropdown", "value"),
+        Input("dataset-dropdown", "value"), #------
         State("points-store", "data"),
         State("meta-store", "data"),
-        Input("show-512d", "data"),
-        Input("pill-highlight", "data"),
-        Input("pair-highlight", "data"),
-        Input("all-highlight", "data")
+        Input("show-512d", "data"), #------
+        Input("show-512gt", "data"), #------
+        Input("pill-highlight", "data"), #------
+        Input("pair-highlight", "data"), #------
+        Input("all-highlight", "data") #------
     )
     def _scatter(edata, sel, proj, traversal_path, cone_direction,
                  labels_data, target_names, mode, k_neighbors,
-                 data_store, dataset_name, points, meta, show_512d,pill_highlight,
+                 data_store, dataset_name, points, meta, show_512d, show_512gt, pill_highlight,
                  pair_highlight, all_highlight):
+        
+        # Empty figure if data hasn't loaded yet (early in startup before _update_dataset_stores populates the store)
         if edata is None or labels_data is None:
             print("Warning: No embedding or label data available for plotting")
             return {}
@@ -948,20 +917,23 @@ def register_callbacks(app: dash.Dash) -> None:
         interpolation_highlight = []
         traversal_points = None
 
-
+        # Preprocessing ------------------------
+        # Traverse Path___________________________________________
         if mode == "interpolate" and traversal_path is not None and len(traversal_path) > 0:
             # traversal_path is a list of indices; convert to actual points
             traversal_points = np.asarray([emb[idx] for idx in traversal_path if idx < len(emb)])
-
+        # KNN with hyperbolic distances__________________________
         if mode == "neighbors" and sel and len(sel) == 1:
             selected_idx = sel[:1]
             if data_store is not None:
                 data_np = np.asarray(data_store, dtype=np.float32)
                 dists = _compute_hyperbolic_distances(data_np[sel[0]], data_np)
                 neighbor_indices = np.argsort(dists)
+                # Neighbors
                 neighbor_indices = neighbor_indices[neighbor_indices != sel[0]][:k_neighbors]
             else:
                 neighbor_indices = []
+        # Trees___________________________________________________________
         elif mode in ("tree", "tree_cones") and sel and len(sel) == 1:
             selected_idx = sel[:1]
             tree_connections = []
@@ -971,7 +943,7 @@ def register_callbacks(app: dash.Dash) -> None:
                 tree_point_indices = []
                 tree_points_by_type = {}
                 for i, pt in enumerate(points):
-                    if pt.get("tree_id") == selected_tree_id:
+                    if pt.get("tree_id") == selected_tree_id: # Point of our tree
                         tree_point_indices.append(i)
                         emb_type = pt.get("embedding_type", "unknown")
                         if emb_type not in tree_points_by_type:
@@ -979,11 +951,12 @@ def register_callbacks(app: dash.Dash) -> None:
                         tree_points_by_type[emb_type].append(i)
                 if dataset_name == "imagenet":
                     level_order = ['parent_text', 'child_text', 'child_image']
-                else:
+                else: # GRIT
                     level_order = ['parent_text', 'child_text', 'parent_image', 'child_image']
                 for i in range(len(level_order) - 1):
                     current_level = level_order[i]
                     next_level = level_order[i + 1]
+                    # Create connections between levels
                     if current_level in tree_points_by_type and next_level in tree_points_by_type:
                         for curr_pt in tree_points_by_type[current_level]:
                             for next_pt in tree_points_by_type[next_level]:
@@ -996,25 +969,27 @@ def register_callbacks(app: dash.Dash) -> None:
         else:
             neighbor_indices = []
 
+        # Poincare Disk Plot____________________________________________________________________________
         def _fig_disk(x, y, sel, labels, target_names, traversal_points=None,
                       neighbor_indices=None, emb_labels=None,
                       tree_connections=None, points=None, meta=None,
                       hidden_types=None, plot_range=0.85):
             colors = {
                 'parent_text':  '#e41a1c',   # red
-    'child_text':   '#377eb8',   # blue  
-    'child_image':  '#4daf4a',   # green
-    'parent_image': '#984ea3',   # purple
+                'child_text':   '#377eb8',   # blue  
+                'child_image':  '#4daf4a',   # green
+                'parent_image': "#ff96b2",   # pink
             }
-            traces = []
+            traces = [] # visual layer: points, lines, text, arrows, etc
             neighbor_set = set(neighbor_indices) if neighbor_indices is not None else set()
             tree_arrow_annotations = []
 
-            # Highlight traversal_points in interpolation mode
+            # Highlight traversal_points in Traverse Path mode
             if traversal_points is not None and len(traversal_points) > 0:
                 # Project traversal_points to disk coordinates
                 traversal_points = np.asarray(traversal_points)
                 if traversal_points.shape[1] > 2:
+                    # Projects 3D-ish coordinates into 2D.
                     traversal_x = traversal_points[:, 0] / (1.0 + traversal_points[:, 2])
                     traversal_y = traversal_points[:, 1] / (1.0 + traversal_points[:, 2])
                 else:
@@ -1067,7 +1042,7 @@ def register_callbacks(app: dash.Dash) -> None:
                                 _create_hover_text(i, points, meta)
                                 for i in regular_indices
                             ]
-                            
+                            # Draw Hovers
                             trace = go.Scatter(
                                 x=x_coords,
                                 y=y_coords,
@@ -1202,19 +1177,7 @@ def register_callbacks(app: dash.Dash) -> None:
                             'text': '',
                         })
 
-            # if traversal_points is not None:
-            #     traces.append(
-            #         go.Scatter(
-            #             x=traversal_points[:, 0],
-            #             y=traversal_points[:, 1],
-            #             mode="markers",
-            #             marker=dict(size=12, color="orange", symbol="diamond"),
-            #             name="Interpolated point",
-            #             text=["Interpolated point"],
-            #             hoverinfo="text",
-            #         )
-            #     )
-
+            # Draw the selected point 
             if sel:
                 traces.append(
                     go.Scatter(
@@ -1235,14 +1198,15 @@ def register_callbacks(app: dash.Dash) -> None:
             max_distance = 0
             for trace in traces:
                 if hasattr(trace, 'x') and hasattr(trace, 'y') and len(trace.x) > 0 and len(trace.y) > 0:
+                    # Euclidean Distance
                     distances = np.sqrt(np.array(trace.x)**2 + np.array(trace.y)**2)
                     max_distance = max(max_distance, np.max(distances))
             
             # Add boundary circle if we have data points (hyperbolic projections
             # only — UMAP is Euclidean, so a disk boundary is meaningless there).
             if max_distance > 0 and proj != "umap":
-                circle_radius = 1.1 * max_distance
-                theta = np.linspace(0, 2*np.pi, 100)
+                circle_radius = 1.1 * max_distance # Slightly bigger than the farest point
+                theta = np.linspace(0, 2*np.pi, 100) # for drawing the circle
                 circle_x = circle_radius * np.cos(theta)
                 circle_y = circle_radius * np.sin(theta)
 
@@ -1257,6 +1221,7 @@ def register_callbacks(app: dash.Dash) -> None:
                 )
                 traces.insert(0, circle_trace)
 
+            # Draw the figure
             fig = go.Figure(data=traces)
 
             # Add arrow annotations for tree connections
@@ -1296,7 +1261,7 @@ def register_callbacks(app: dash.Dash) -> None:
             fig.update_layout(
                 xaxis=xaxis,
                 yaxis=yaxis,
-                margin=dict(l=0, r=0, b=60, t=30),
+                margin=dict(l=2, r=2, b=90, t=30),
                 # Per-projection so switching projection re-fits the view (autoscale).
                 uirevision=proj,
                 showlegend=True,
@@ -1309,8 +1274,9 @@ def register_callbacks(app: dash.Dash) -> None:
                     bgcolor="rgba(255,255,255,0.9)",
                     bordercolor="#dee2e6",
                     borderwidth=1,
-                    itemclick="toggle",
+                    itemclick="toggle", # Interactive
                     itemdoubleclick="toggleothers",
+                    font=dict(size=10),
                     title=dict(
                         text="Click to filter ↓",
                         font=dict(size=10, color="#6c757d")
@@ -1344,6 +1310,8 @@ def register_callbacks(app: dash.Dash) -> None:
                 emb_labels = emb_data_loaded.get("labels", [])
             except Exception as e:
                 emb_labels = []
+        
+        # Fig Disk ----------------------------------------------------------------------------------------------
         fig_disk = _fig_disk(
             dx, dy,
             selected_idx if mode == "neighbors" else highlight,
@@ -1358,8 +1326,8 @@ def register_callbacks(app: dash.Dash) -> None:
             plot_range=plot_range,       
         )
 
-        # ── Cone mode: draw wedge + highlight 512D members ────────────
-        # ── Cone mode: one wedge per selected point ────────────────────
+        # CONES -------------------------------------------------------------------------------------------------
+        # ── Cone mode: draw wedge + highlight 512D members ──────────── Also (cone + tree) works here
         if mode in ("cones", "tree_cones") and sel and len(sel) >= 1:
             from .cone_utils import (
                 compute_cone_aperture_2d,
@@ -1368,18 +1336,16 @@ def register_callbacks(app: dash.Dash) -> None:
                 CONE_SCALE_2D,
             )
 
-            shapes = []
-            for i, anchor_idx in enumerate(sel):
+            shapes = [] # Layout
+            for i, anchor_idx in enumerate(sel): # For multi cones (up to 5)
                 if anchor_idx >= len(dx):
                     continue
                 color = CONE_COLORS[i % len(CONE_COLORS)]
                 anchor_2d = np.array([dx[anchor_idx], dy[anchor_idx]])
                 aperture_deg = compute_cone_aperture_2d(
                     anchor_2d, scale=CONE_SCALE_2D)
-                if aperture_deg is None:
-                    continue   # out-of-disk anchor (UMAP)
 
-                if cone_direction in ("outward", "both"):
+                if cone_direction in ("outward", "both"): # Cone Shape Outward
                     shapes.append(dict(
                         type="path",
                         path=compute_cone_wedge_path(
@@ -1389,7 +1355,7 @@ def register_callbacks(app: dash.Dash) -> None:
                         line=dict(color=color["line"], width=1.5),
                         layer="below",
                     ))
-                if cone_direction in ("inward", "both"):
+                if cone_direction in ("inward", "both"): # Cone Shape Inward
                     shapes.append(dict(
                         type="path",
                         path=compute_inward_cone_wedge_path(
@@ -1403,10 +1369,11 @@ def register_callbacks(app: dash.Dash) -> None:
 
             fig_disk.update_layout(shapes=shapes)
 
-            # Numbered labels on each cone anchor (black, over the gold ring)
+            # ---------------------------------------------------------------
+            # Numbered labels on each cone anchor (White, over the gold ring)
             badge_x = [dx[a] for a in sel if a < len(dx)]
             badge_y = [dy[a] for a in sel if a < len(dx)]
-            badge_t = [str(i + 1) for i, a in enumerate(sel) if a < len(dx)]
+            badge_t = [str(i + 1) for i, a in enumerate(sel) if a < len(dx)] # Up to 5
             if badge_x:
                 fig_disk.add_trace(go.Scatter(
                     x=badge_x, y=badge_y,
@@ -1419,10 +1386,12 @@ def register_callbacks(app: dash.Dash) -> None:
                     showlegend=False,
                 ))
 
-            # ── 512D cone highlights (purple rings) ──────────────────
+            #---------------------------------------------------------------
+            # ── 512D cone highlights (purple rings) 
+            # What the cone contains in the true space (512D)
             if show_512d:
-                hl_outward = []
-                hl_inward  = []
+                hl_outward = [] # points inside outward cone in 512D
+                hl_inward  = [] # points inside inward cone in 512D
 
                 for anchor_idx in sel:
                     if anchor_idx >= len(dx):
@@ -1438,11 +1407,13 @@ def register_callbacks(app: dash.Dash) -> None:
                     if cone_direction in ("inward", "both"):
                         hl_inward  += hl["inward_512d"]
 
+                # Clean up: a) removes duplicates, b) remove anchor points
                 hl_outward = [i for i in set(hl_outward)
                             if i < len(dx) and i not in sel]
                 hl_inward  = [i for i in set(hl_inward)
                             if i < len(dx) and i not in sel]
 
+                # Draw them------
                 if hl_outward:
                     fig_disk.add_trace(go.Scatter(
                         x=[dx[i] for i in hl_outward],
@@ -1473,45 +1444,51 @@ def register_callbacks(app: dash.Dash) -> None:
                         showlegend=True,
                     ))
 
+            #------------------------------------------------------------------------------------
             # ── GT children highlight (purple rings) ─────────────────────
-            if points and emb_labels:
-                from .cone_utils import LEVEL_MAP as _LEVEL_MAP
-                all_gt_children: set[int] = set()
-                for anchor_idx in sel:
-                    if anchor_idx >= len(emb_labels):
-                        continue
-                    anchor_tree = (points[anchor_idx].get("tree_id", "")
-                                   if anchor_idx < len(points) else "")
-                    anchor_level = _LEVEL_MAP.get(emb_labels[anchor_idx], 0)
-                    for i, pt in enumerate(points):
-                        if i == anchor_idx or pt.get("tree_id", "") != anchor_tree:
+            if show_512gt:
+                if points and emb_labels:
+                    from .cone_utils import LEVEL_MAP as _LEVEL_MAP
+                    all_gt_children: set[int] = set()
+                    for anchor_idx in sel:
+                        if anchor_idx >= len(emb_labels):
                             continue
-                        pt_level = _LEVEL_MAP.get(
-                            emb_labels[i] if i < len(emb_labels) else "", 0)
-                        if pt_level > anchor_level:
-                            all_gt_children.add(i)
-                gt_visible = [i for i in all_gt_children
-                              if i < len(dx) and i not in sel]
-                if gt_visible:
-                    fig_disk.add_trace(go.Scatter(
-                        x=[dx[i] for i in gt_visible],
-                        y=[dy[i] for i in gt_visible],
-                        mode="markers",
-                        marker=dict(
-                            size=13,
-                            color="rgba(0,0,0,0)",
-                            line=dict(width=2.5, color="#8e44ad"),
-                        ),
-                        name="GT children",
-                        hoverinfo="skip",
-                        showlegend=True,
-                    ))
+                        anchor_tree = (points[anchor_idx].get("tree_id", "")
+                                       if anchor_idx < len(points) else "")
+                        anchor_level = _LEVEL_MAP.get(emb_labels[anchor_idx], 0)
+                        for i, pt in enumerate(points):
+                            if i == anchor_idx or pt.get("tree_id", "") != anchor_tree:
+                                continue
+                            pt_level = _LEVEL_MAP.get(
+                                emb_labels[i] if i < len(emb_labels) else "", 0)
+                            if pt_level > anchor_level:
+                                all_gt_children.add(i)
+                    gt_visible = [i for i in all_gt_children
+                                  if i < len(dx) and i not in sel]
+                    # Draw them--------------
+                    if gt_visible:
+                        fig_disk.add_trace(go.Scatter(
+                            x=[dx[i] for i in gt_visible],
+                            y=[dy[i] for i in gt_visible],
+                            mode="markers",
+                            marker=dict(
+                                size=11,
+                                color="rgba(0,0,0,0)",
+                                line=dict(width=2.5, color="#000000"),
+                            ),
+                            name="GT children",
+                            hoverinfo="skip",
+                            showlegend=True,
+                        ))
 
-            # ── Pill highlight (black circle from right-panel click) ──────
+        #------------------------------------------------------------------------------
+        # ── Pill highlight (black circle from right-panel click) ──────
         if (mode in ("cones", "tree_cones")
                 and pill_highlight is not None
                 and pill_highlight < len(dx)):
+            # Draw----------
             fig_disk.add_trace(go.Scatter(
+            # one-element list, (Plotly expects sequences for x and y)
                 x=[dx[pill_highlight]],
                 y=[dy[pill_highlight]],
                 mode="markers",
@@ -1526,6 +1503,7 @@ def register_callbacks(app: dash.Dash) -> None:
                 showlegend=False,
             ))
 
+        # INTERSECTION -------------------------------------------------
         # ── Pair intersection highlight (from matrix cell click) ──────
         if (mode in ("cones", "tree_cones")
                 and pair_highlight is not None
@@ -1540,23 +1518,22 @@ def register_callbacks(app: dash.Dash) -> None:
                     from shapely.geometry import Polygon
                     dir_ = "inward" if cone_direction == "inward" else "outward"
                     polys = []
-                    for c in (sel[i], sel[j]):
+                    for c in (sel[i], sel[j]): # for each cone
                         if c >= len(dx):
                             polys = []
                             break
-                        a2d = np.array([dx[c], dy[c]])
+                        a2d = np.array([dx[c], dy[c]]) # 2D anchor's position
                         ap = compute_cone_aperture_2d(a2d, scale=CONE_SCALE_2D)
-                        if ap is None:
-                            polys = []
-                            break
                         polys.append(Polygon(cone_wedge_polygon(
                             a2d, ap, disk_radius=disk_radius, direction=dir_)))
+                    # 2 Cone Intersection
                     if len(polys) == 2:
                         inter = polys[0].intersection(polys[1])
-                        if not inter.is_empty:
+                        if not inter.is_empty: # draw something if there is an overlap
                             geoms = (inter.geoms if inter.geom_type
                                      == "MultiPolygon" else [inter])
-                            for g in geoms:
+                            # Coordinates of each intersection polygon
+                            for g in geoms: 
                                 gx, gy = g.exterior.xy
                                 fig_disk.add_trace(go.Scatter(
                                     x=list(gx), y=list(gy),
@@ -1582,6 +1559,8 @@ def register_callbacks(app: dash.Dash) -> None:
                 else:
                     set_i = set(hi["outward_512d"])
                     set_j = set(hj["outward_512d"])
+
+                # Intersection set
                 shared = [k for k in (set_i & set_j) if k < len(dx)]
                 if shared:
                     fig_disk.add_trace(go.Scatter(
@@ -1608,22 +1587,19 @@ def register_callbacks(app: dash.Dash) -> None:
                 dir_ = "inward" if cone_direction == "inward" else "outward"
                 polys = []
                 for c in valid:
-                    a2d = np.array([dx[c], dy[c]])
+                    a2d = np.array([dx[c], dy[c]]) # anchor 2D position
                     ap = compute_cone_aperture_2d(a2d, scale=CONE_SCALE_2D)
-                    if ap is None:
-                        polys = []
-                        break
                     polys.append(Polygon(cone_wedge_polygon(
                         a2d, ap, disk_radius=disk_radius, direction=dir_)))
                 if polys:
-                    inter = polys[0]
+                    inter = polys[0] # first cone
                     for p in polys[1:]:
-                        inter = inter.intersection(p)
-                    if not inter.is_empty:
+                        inter = inter.intersection(p) # Intersections
+                    if not inter.is_empty: # Draw if there is overlap
                         geoms = (inter.geoms if inter.geom_type
                                  == "MultiPolygon" else [inter])
                         for g in geoms:
-                            gx, gy = g.exterior.xy
+                            gx, gy = g.exterior.xy # outer boundary coordinates of polygon
                             fig_disk.add_trace(go.Scatter(
                                 x=list(gx), y=list(gy),
                                 mode="lines", fill="toself",
@@ -1646,7 +1622,7 @@ def register_callbacks(app: dash.Dash) -> None:
             if sets:
                 inter_set = sets[0]
                 for s in sets[1:]:
-                    inter_set &= s
+                    inter_set &= s # Intersections
                 shared_all = [k for k in inter_set if k < len(dx)]
                 if shared_all:
                     fig_disk.add_trace(go.Scatter(
@@ -1662,6 +1638,11 @@ def register_callbacks(app: dash.Dash) -> None:
         return fig_disk
 
 #####################################################################################
+
+ # Change the projection visualizations buttons for HoroPCA, COSNE, TriMAP, UMAP
+ # Green ----> Active
+ # Grey ----> Inactive
+
     @app.callback(
         Output("proj", "data", allow_duplicate=True),
         Output("proj-horopca-btn", "style", allow_duplicate=True),
@@ -1781,7 +1762,7 @@ def register_callbacks(app: dash.Dash) -> None:
                 if mode == "compare": max_points = 5
                 elif mode == "interpolate": max_points = 2
                 elif mode == "neighbors": max_points = 1
-                elif mode in ("cones", "tree_cones"):
+                elif mode in ("cones", "tree_cones"): # ADDED for multi cones
                     max_points = 5 if cone_multi_mode else 1
                 if len(new_sel) > max_points:
                     new_sel = new_sel[-max_points:]
@@ -1890,8 +1871,11 @@ def register_callbacks(app: dash.Dash) -> None:
         return traversal_path
         
 #####################################################################################
+# Tree Right panel
     @app.callback(
-        [Output("tree-levels-above", "children"), Output("tree-selected-level", "children"), Output("tree-levels-below", "children")],
+        [Output("tree-levels-above", "children"), 
+         Output("tree-selected-level", "children"), 
+         Output("tree-levels-below", "children")],
         Input("sel", "data"),
         Input("mode", "data"),
         State("meta-store", "data"),
@@ -2044,17 +2028,25 @@ def register_callbacks(app: dash.Dash) -> None:
         
         # Level 1: Parent Text
         if selected_level == 1:
-            current_level = create_level_component(1, html.P(meta_row.get("name", synset_id), style={"margin": 0, "fontWeight": "bold"}), True)
+            current_level = create_level_component(1, 
+                                                   html.P(meta_row.get("name", synset_id), 
+                                                          style={"margin": 0, "fontWeight": "bold"}), True)
         elif selected_level > 1:
             levels_above.append(create_level_component(1, html.P(meta_row.get("name", synset_id), style={"margin": 0})))
         
         # Level 2: Child Text  
         if selected_level == 2:
-            current_level = create_level_component(2, html.P(meta_row.get("description", "(no description)"), style={"margin": 0, "fontWeight": "bold"}), True)
+            current_level = create_level_component(2, 
+                                                   html.P(meta_row.get("description", "(no description)"), 
+                                                          style={"margin": 0, "fontWeight": "bold"}), True)
         elif selected_level > 2:
-            levels_above.append(create_level_component(2, html.P(meta_row.get("description", "(no description)"), style={"margin": 0})))
+            levels_above.append(create_level_component(2, 
+                                                       html.P(meta_row.get("description", "(no description)"), 
+                                                              style={"margin": 0})))
         elif selected_level < 2:
-            levels_below.append(create_level_component(2, html.P(meta_row.get("description", "(no description)"), style={"margin": 0, "color": "#6c757d"})))
+            levels_below.append(create_level_component(2, 
+                                                       html.P(meta_row.get("description", "(no description)"), 
+                                                              style={"margin": 0, "color": "#6c757d"})))
         
         # Level 3: Parent Image (GRIT) or Child Image (ImageNet)
         if dataset_name == "imagenet":
@@ -2185,6 +2177,8 @@ def register_callbacks(app: dash.Dash) -> None:
             )
         
 #####################################################################################
+# Callback for the modes Buttons. Default mode = COMPARE
+
     @app.callback(
     Output("mode", "data"),
     Output("compare-btn", "style"),
@@ -2223,9 +2217,7 @@ def register_callbacks(app: dash.Dash) -> None:
         inactive = {**base_style, "backgroundColor": "#007bff"}
         active   = {**base_style, "backgroundColor": "green"}
         tree_inactive = {**base_style, "backgroundColor": "#995418"}
-        tree_active   = {**base_style, "backgroundColor": "green"}
         cones_inactive = {**base_style, "backgroundColor": "#e67e22"}
-        cones_active   = {**base_style, "backgroundColor": "green"}
 
         # Decode current tree/cones state from the mode string
         cur = current_mode or "compare"
@@ -2252,7 +2244,7 @@ def register_callbacks(app: dash.Dash) -> None:
                 mode = "cones"
             else:
                 mode = "compare"   # both toggled off → fall back to compare
-        elif triggered_id == "interpolate-mode-btn":
+        elif triggered_id == "interpolate-mode-btn": # This is the Traverse Path
             mode = "interpolate"
         elif triggered_id == "neighbors-mode-btn":
             mode = "neighbors"
@@ -2263,8 +2255,8 @@ def register_callbacks(app: dash.Dash) -> None:
         compare_style     = active if mode == "compare" else inactive
         interpolate_style = active if mode == "interpolate" else inactive
         neighbors_style   = active if mode == "neighbors" else inactive
-        tree_style = tree_active if tree_on else tree_inactive
-        cones_style       = cones_active if cones_on else cones_inactive
+        tree_style        = active if tree_on else tree_inactive
+        cones_style       = active if cones_on else cones_inactive
 
         # Controls visibility
         interpolate_controls_style = {"display": "block"} if mode == "interpolate" else {"display": "none"}
@@ -2298,6 +2290,8 @@ def register_callbacks(app: dash.Dash) -> None:
         )
     
     #####################################################################################
+    # Callback for the Analysis Cones / Single vs Multiple
+
     @app.callback(
         Output("cone-multi-mode", "data"),
         Output("cone-single-btn", "style"),
@@ -2323,6 +2317,8 @@ def register_callbacks(app: dash.Dash) -> None:
         return False, active, inactive
     
 #####################################################################################
+# This callback is for the Traverse Path 
+
     @app.callback(
         Output("cmp", "children"),
         Output("cmp-instructions", "children"),
@@ -2565,6 +2561,8 @@ def register_callbacks(app: dash.Dash) -> None:
         return html.Div(), instructions
 
 #####################################################################################
+# Header on the right panel change
+
     @app.callback(
         Output("cmp-header", "children"),
         Input("mode", "data"),
@@ -2581,11 +2579,12 @@ def register_callbacks(app: dash.Dash) -> None:
         elif mode == "cones":
             return html.H4("Entailment Cones")
         elif mode == "tree_cones":
-            return html.H4("Tree + Entailment Cones")
+            return html.H4("Tree & Entailment Cone")
         else:
             return html.H4("Point comparison")
 
 #####################################################################################
+# This is for the Outward/Inward/Both Button
     @app.callback(
         Output("cone-direction", "data"),
         Output("cone-outward-btn", "style"),
@@ -2622,6 +2621,7 @@ def register_callbacks(app: dash.Dash) -> None:
         return "outward", active, inactive, inactive
 
 #####################################################################################
+# Cone Panel___________________________________-
     @app.callback(
         Output("cone-tab-content", "children"),
         Input("sel", "data"),
@@ -2658,11 +2658,12 @@ def register_callbacks(app: dash.Dash) -> None:
                         f"/{proj}_embeddings.pkl")
             with open(emb_file, "rb") as f:
                 emb_pkl = pickle.load(f)
-            emb_np = np.array(emb_pkl["embeddings"], dtype=np.float32)
-            labels_2d = emb_pkl.get("labels", [])
+            emb_np = np.array(emb_pkl["embeddings"], dtype=np.float32) # projected coordinates
+            labels_2d = emb_pkl.get("labels", []) # labels/types for points
         except Exception as e:
             return html.P(f"Error: {e}", style={"color": "#dc3545"})
 
+        # projected coordinates --> disk coordinates
         xh, yh = emb_np[:, 0], emb_np[:, 1]
         zh = (emb_np[:, 2] if emb_np.shape[1] > 2
               else np.zeros(len(emb_np)))
@@ -2695,15 +2696,16 @@ def register_callbacks(app: dash.Dash) -> None:
             'parent_text': '#e41a1c',
             'child_text':  '#377eb8',
             'child_image': '#4daf4a',
-            'parent_image':'#984ea3',
+            'parent_image':"#ff96b2",
         }
 
         CONE_LINE_COLORS = [
             "#e67e22", "#d35400", "#f39c12", "#c0392b", "#7f2800"
         ]
 
+        # Children/Parent Pills creation
         def _point_pill(idx, inside_set=None):
-            lbl = labels_2d[idx] if idx < len(labels_2d) else "?"
+            lbl = labels_2d[idx] if idx < len(labels_2d) else "?" # point's label
             base_color = type_colors.get(lbl, "#6c757d")
             is_inside = (inside_set is None) or (idx in inside_set)
             is_selected = (pill_highlight is not None and idx == pill_highlight)
@@ -2727,7 +2729,7 @@ def register_callbacks(app: dash.Dash) -> None:
 
             return html.Span(
                 f"#{idx} {lbl.replace('_', ' ')}",
-                id={"type": "gt-pill", "index": idx},
+                id={"type": "gt-pill", "index": idx}, 
                 n_clicks=0,
                 style={
                     "backgroundColor": bg,
@@ -2745,7 +2747,8 @@ def register_callbacks(app: dash.Dash) -> None:
                     "transition": "border 0.15s, box-shadow 0.15s",
                 }
             )
-            
+        
+        # Precision__________________________________________________________
         def _precision_block(cov_gt, cone_members, cov_noun, n_pool):
             """Precision of the cone vs ground-truth relatives, with the
             random baseline and lift over chance.
@@ -2761,7 +2764,7 @@ def register_callbacks(app: dash.Dash) -> None:
             """
             gt_set = set(cov_gt)
             cone_set = set(cone_members)
-            hits = len(gt_set & cone_set)
+            hits = len(gt_set & cone_set) # Overlap
             precision_pct = (hits / len(cone_set) * 100) if cone_set else 0.0
             clr = ("#28a745" if precision_pct >= 60 else
                    "#ffc107" if precision_pct >= 30 else "#dc3545")
@@ -2777,6 +2780,7 @@ def register_callbacks(app: dash.Dash) -> None:
                 lift_txt = "n/a"
                 lift_clr = "#6c757d"
 
+            # Draw the panel of Precision
             return html.Div([
                 html.Hr(style={"margin": "0.4rem 0"}),
                 html.H6("Precision",
@@ -2808,8 +2812,10 @@ def register_callbacks(app: dash.Dash) -> None:
                            "fontStyle": "italic", "margin": "0.1rem 0 0 0"}),
             ])
 
+        # Recall _____________________________________________________________
         def _trained_recall_block(direct_gt, cone_members, cov_noun):
-            """Recall against the DIRECT (adjacent-level) pairs only — the
+            """
+            Recall against the DIRECT (adjacent-level) pairs only — the
             relationships HyCoCLIP was actually trained on — rather than the
             full transitive taxonomy. Lets us separate 'doesn't recover the
             dataset's full taxonomy' from 'doesn't encode hierarchy at all'.
@@ -2841,46 +2847,8 @@ def register_callbacks(app: dash.Dash) -> None:
                     style={"fontSize": "0.68rem", "color": "#adb5bd",
                            "fontStyle": "italic", "margin": "0.1rem 0 0 0"}),
             ])
-            
-        def _knn_recall_block(anchor_idx, coords_2d, gt_relatives, rel_noun):
-            """Euclidean k-NN analogue of Coverage, for anchors whose 2D position
-            falls outside the unit disk (e.g. UMAP) — where cone aperture and
-            cone membership are undefined. Asks the same question (how many GT
-            relatives sit "near" the anchor) using the only notion of "near"
-            this geometry actually has: plain Euclidean distance, with
-            k = |gt_relatives| so it's directly comparable to the Coverage %
-            shown for the hyperbolic projections.
-            """
-            recall, knn_idx = compute_knn_recall_2d(anchor_idx, coords_2d, gt_relatives)
-            recall_pct = recall * 100
-            hits = len(set(gt_relatives) & set(knn_idx))
-            clr = ("#28a745" if recall_pct >= 60 else
-                "#ffc107" if recall_pct >= 30 else "#dc3545")
 
-            return html.Div([
-                html.Hr(style={"margin": "0.4rem 0"}),
-                html.H6("Nearest-neighbor recall (Euclidean)",
-                        style={"margin": "0 0 0.3rem 0", "color": "#333",
-                            "fontSize": "0.82rem"}),
-                html.Div([
-                    html.Span(f"{recall_pct:.0f}%",
-                            style={"fontSize": "1.4rem", "fontWeight": "bold",
-                                    "color": clr, "marginRight": "0.4rem"}),
-                    html.Span(
-                        f"{hits}/{len(gt_relatives)} GT {rel_noun} among its "
-                        f"{len(gt_relatives)} nearest neighbors"
-                        if gt_relatives else f"No {rel_noun} to evaluate",
-                        style={"fontSize": "0.78rem", "color": "#6c757d"}),
-                ]),
-                html.P(
-                    "Cone aperture isn't defined outside the unit disk, so this "
-                    "substitutes plain 2D distance (k = number of GT relatives) "
-                    "as the nearest equivalent of Coverage for this projection.",
-                    style={"fontSize": "0.68rem", "color": "#adb5bd",
-                        "fontStyle": "italic", "margin": "0.1rem 0 0 0"}),
-            ])
-            
-            
+        # Display the image/text when the pill children/parent is picked
         def _pill_detail_block(pill_idx):
             if pill_idx is None or pill_idx >= len(points):
                 return html.Div()
@@ -2902,7 +2870,7 @@ def register_callbacks(app: dash.Dash) -> None:
                 "marginTop": "0.5rem",
             })
 
-#######################################################################
+        # ________________________________________________________________________
         # MULTI CONES
         # ── Intersection tab ─────────────────────────────────────────
         # ── Intersection view (multi-cone, 512D, direction-aware) ────
@@ -2929,30 +2897,11 @@ def register_callbacks(app: dash.Dash) -> None:
                     members_2d.append(set(cd["inward_indices"]))
                     members_512d.append(set(cd["inward_512d"]))
                     gt_relatives.append(set(cd["gt_parents"]))
-
                 else:
                     members_2d.append(set(cd["outward_indices"]))
                     members_512d.append(set(cd["outward_512d"]))
                     gt_relatives.append(set(cd["gt_children"]))
-                    
-                cds = [compute_cone_data(anchor_idx=a, coords_2d=coords_2d, points=points,
-                          labels_2d=labels_2d, dataset_name=dataset_name) for a in sel]
-                if any(c["out_of_disk"] for c in cds):
-                    rel_noun_oob = "parents" if cone_direction == "inward" else "children"
-                    blocks = [
-                        _knn_recall_block(a, coords_2d,
-                                        c["gt_parents"] if cone_direction == "inward" else c["gt_children"],
-                                        rel_noun_oob)
-                        for a, c in zip(sel, cds)
-                    ]
-                    return html.Div([
-                        umap_warning,
-                        html.P("This point's 2D position lies outside the unit disk "
-                            "(this projection isn't hyperbolic), so cone aperture, "
-                            "coverage, precision and trained-recall are undefined here.",
-                            style={"color": "#856404", "fontSize": "0.8rem"}),*blocks,])
-                    
-                    
+
             rel_noun = "parents" if cone_direction == "inward" else "children"
 
             # k-way intersections
@@ -2969,6 +2918,7 @@ def register_callbacks(app: dash.Dash) -> None:
             # ground-truth relative of every anchor.
             gt_shared = inter_512d & inter_gt
 
+            # Panel cone dots creation func
             def _dot(i):
                 return html.Span(
                     str(i + 1),
@@ -2987,6 +2937,7 @@ def register_callbacks(app: dash.Dash) -> None:
                     }
                 )
 
+            # Cone dots headers---------------
             header_dots = html.Span(
                 [_dot(i) for i in range(len(sel))],
                 style={"marginRight": "0.4rem"}
@@ -2994,7 +2945,7 @@ def register_callbacks(app: dash.Dash) -> None:
 
             children = [
                 html.H6(["∩ Cone Intersection  ", header_dots,
-                         f"({len(sel)} cones, {rel_noun})"],
+                         f"({len(sel)} cones)"],
                         style={"margin": "0 0 0.5rem 0",
                                "color": "#2c3e50", "fontSize": "0.9rem"}),
                 html.Hr(style={"margin": "0.3rem 0"}),
@@ -3045,15 +2996,15 @@ def register_callbacks(app: dash.Dash) -> None:
                 ),
             ]
 
-            # Pairwise 512D grid (only for k >= 3)
-            if len(sel) >= 3:
+            # Pairwise 512D grid (only for k >= 2)
+            if len(sel) >= 2:
                 children.append(html.Hr(style={"margin": "0.5rem 0"}))
                 children.append(html.P(
                     "Pairwise 512D overlap",
                     style={"fontWeight": "600", "fontSize": "0.8rem",
                            "margin": "0.3rem 0", "color": "#495057"}))
 
-                # header row
+                # header column
                 header_cells = [html.Td("", style={"padding": "0.2rem"})]
                 for j in range(len(sel)):
                     header_cells.append(html.Td(
@@ -3062,11 +3013,13 @@ def register_callbacks(app: dash.Dash) -> None:
                     ))
                 rows = [html.Tr(header_cells)]
 
+                # header row
                 for i in range(len(sel)):
                     cells = [html.Td(
                         _dot(i),
                         style={"padding": "0.2rem", "textAlign": "center"}
                     )]
+                    # Fill the Matrix------
                     for j in range(len(sel)):
                         if i == j:
                             txt = "—"
@@ -3087,7 +3040,7 @@ def register_callbacks(app: dash.Dash) -> None:
                         else:
                             cells.append(html.Td(
                                 txt,
-                                id={"type": "pair-cell",
+                                id={"type": "pair-cell", # Interactive cells
                                     "i": min(i, j), "j": max(i, j)},
                                 n_clicks=0,
                                 style={"padding": "0.25rem 0.4rem",
@@ -3099,6 +3052,7 @@ def register_callbacks(app: dash.Dash) -> None:
                             ))
                     rows.append(html.Tr(cells))
 
+                # Table Creation (Intersection Matrix)
                 children.append(html.Table(
                     [html.Tbody(rows)],
                     style={"borderCollapse": "collapse", "margin": "0.3rem 0"}
@@ -3150,19 +3104,6 @@ def register_callbacks(app: dash.Dash) -> None:
                 sect_title, sect_arrow = "↑ Parents", "inward"
                 gt_list, inside_set = gt_parents, set(inward_idx)
                 accent = "#377eb8"
-                
-            if cd["out_of_disk"]:                                      # ← insert here
-                return html.Div([
-                    umap_warning,
-                    html.P(
-                        "This point's 2D position lies outside the unit disk (this "
-                        "projection isn't hyperbolic), so cone aperture, coverage, "
-                        "precision and trained-recall are undefined here.",
-                        style={"color": "#856404", "fontSize": "0.8rem"}
-                    ),
-                    _knn_recall_block(anchor_idx, coords_2d, cov_gt, cov_noun),
-                    _pill_detail_block(pill_highlight),
-                ])
 
             cov_hits = len(set(cov_gt) & set(cov_cone))
             coverage_pct = (cov_hits / len(cov_gt) * 100) if cov_gt else 0.0
@@ -3268,20 +3209,7 @@ def register_callbacks(app: dash.Dash) -> None:
             cov_cone = outward_idx
             cov_noun = "children"
             cov_direct = direct_children
-            
-        if cd["out_of_disk"]:                                          # ← insert here
-            return html.Div([
-                umap_warning,
-                html.P(
-                    "This point's 2D position lies outside the unit disk (this "
-                    "projection isn't hyperbolic), so cone aperture, coverage, "
-                    "precision and trained-recall are undefined here.",
-                    style={"color": "#856404", "fontSize": "0.8rem"}
-                ),
-                _knn_recall_block(anchor_idx, coords_2d, cov_gt, cov_noun),
-                _pill_detail_block(pill_highlight),
-            ])
-            
+
         cov_hits = len(set(cov_gt) & set(cov_cone))
         coverage_pct = (cov_hits / len(cov_gt) * 100) if cov_gt else 0.0
         coverage_color = (
@@ -3353,8 +3281,7 @@ def register_callbacks(app: dash.Dash) -> None:
             if gt_children else
             html.P("Leaf — no children.",
                    style={"color": "#6c757d", "fontStyle": "italic",
-                           "fontSize": "0.8rem", "margin": "0"}),
-
+                           "fontSize": "0.8rem", "margin": "0"}),           
             html.P(
                 f"Cone captures "
                 f"{len(inward_idx) if cone_direction == 'inward' else len(outward_idx)} "
@@ -3397,6 +3324,7 @@ def register_callbacks(app: dash.Dash) -> None:
         ])
     
 ####################################################################################
+# Dual/Single/Grid Visualizations
     @app.callback(
         Output("view-mode", "data"),
         Output("comparison-mode", "data"),
@@ -3559,9 +3487,12 @@ def register_callbacks(app: dash.Dash) -> None:
         Input("comparison-mode", "data"),
         Input("cone-direction", "data"),
         Input("show-512d", "data"),
+        Input("show-512gt", "data"),
         State("proj", "data"),
     )
-    def _scatter_plot_2(dataset_name, sel, mode, k_neighbors, traversal_path, labels_data, target_names, data_store, points, comparison_mode, cone_direction, show_512d, selected_proj):
+    def _scatter_plot_2(dataset_name, sel, mode, k_neighbors, traversal_path, labels_data, 
+                        target_names, data_store, points, comparison_mode, cone_direction, show_512d, 
+                        show_512gt, selected_proj):
         if not comparison_mode or labels_data is None or not dataset_name:
             return {}
         
@@ -3701,7 +3632,7 @@ def register_callbacks(app: dash.Dash) -> None:
         # Create the figure with all mode features
         fig = _create_full_interactive_scatter(dx, dy, labels, target_names, emb_labels, "", sel, neighbor_indices, tree_connections, interp_transformed, mode, points=points)
         dr = float(np.max(np.sqrt(dx**2 + dy**2))) + 0.08 if len(dx) else 1.0
-        fig = _add_cones_to_fig(fig, dx, dy, sel, cone_direction, mode, dataset_name, show_512d, CONE_COLORS, dr)
+        fig = _add_cones_to_fig(fig, dx, dy, sel, cone_direction, mode, dataset_name, show_512d, show_512gt, CONE_COLORS, dr)
         return fig
 
 #####################################################################################
@@ -3719,9 +3650,12 @@ def register_callbacks(app: dash.Dash) -> None:
         Input("comparison-mode", "data"),
         Input("cone-direction", "data"),
         Input("show-512d", "data"),
+        Input("show-512gt", "data"),
         State("proj", "data"),
     )
-    def _scatter_plot_1(dataset_name, sel, mode, k_neighbors, traversal_path, labels_data, target_names, data_store, points, comparison_mode, cone_direction, show_512d, selected_proj):
+    def _scatter_plot_1(dataset_name, sel, mode, k_neighbors, traversal_path, labels_data, 
+                        target_names, data_store, points, comparison_mode, 
+                        cone_direction, show_512d, show_512gt, selected_proj):
         if not comparison_mode or labels_data is None or not dataset_name:
             return {}
         
@@ -3861,7 +3795,7 @@ def register_callbacks(app: dash.Dash) -> None:
         # Create the figure with all mode features
         fig = _create_full_interactive_scatter(dx, dy, labels, target_names, emb_labels, "", sel, neighbor_indices, tree_connections, interp_transformed, mode, points=points)
         dr = float(np.max(np.sqrt(dx**2 + dy**2))) + 0.08 if len(dx) else 1.0
-        fig = _add_cones_to_fig(fig, dx, dy, sel, cone_direction, mode, dataset_name, show_512d, CONE_COLORS, dr)
+        fig = _add_cones_to_fig(fig, dx, dy, sel, cone_direction, mode, dataset_name, show_512d, show_512gt, CONE_COLORS, dr)
         return fig
 
 #####################################################################################
@@ -3957,7 +3891,7 @@ def register_callbacks(app: dash.Dash) -> None:
         # UMAP is Euclidean — don't draw the Poincaré disk boundary around it.
         fig = _create_full_interactive_scatter(dx, dy, labels, target_names, emb_labels, "", sel, neighbor_indices, tree_connections, interp_transformed, mode, points=points, draw_boundary=(proj_name != "umap"))
         dr = float(np.max(np.sqrt(dx**2 + dy**2))) + 0.08 if len(dx) else 1.0
-        return _add_cones_to_fig(fig, dx, dy, sel, cone_direction, mode, dataset_name, show_512d, CONE_COLORS, dr)
+        return _add_cones_to_fig(fig, dx, dy, sel, cone_direction, mode, dataset_name, show_512d, show_512gt, CONE_COLORS, dr)
 
 #####################################################################################
     @app.callback(
@@ -3974,11 +3908,15 @@ def register_callbacks(app: dash.Dash) -> None:
         Input("comparison-mode", "data"),
         Input("cone-direction", "data"),
         Input("show-512d", "data"),
+        Input("show-512gt", "data"),
     )
-    def _scatter_plot_3(dataset_name, sel, mode, k_neighbors, traversal_path, labels_data, target_names, data_store, points, comparison_mode, cone_direction, show_512d):
+    def _scatter_plot_3(dataset_name, sel, mode, k_neighbors, traversal_path, 
+                        labels_data, target_names, data_store, points, comparison_mode, 
+                        cone_direction, show_512d, show_512gt):
         if not comparison_mode:
             return {}
-        return _build_compare_scatter("umap", dataset_name, sel, mode, k_neighbors, traversal_path, labels_data, target_names, data_store, points, cone_direction, show_512d)
+        return _build_compare_scatter("umap", dataset_name, sel, mode, k_neighbors, traversal_path, 
+                                      labels_data, target_names, data_store, points, cone_direction, show_512d)
 
 #####################################################################################
     @app.callback(
@@ -3995,11 +3933,15 @@ def register_callbacks(app: dash.Dash) -> None:
         Input("comparison-mode", "data"),
         Input("cone-direction", "data"),
         Input("show-512d", "data"),
+        Input("show-512gt", "data"),
     )
-    def _scatter_plot_4(dataset_name, sel, mode, k_neighbors, traversal_path, labels_data, target_names, data_store, points, comparison_mode, cone_direction, show_512d):
+    def _scatter_plot_4(dataset_name, sel, mode, k_neighbors, traversal_path, 
+                        labels_data, target_names, data_store, points, 
+                        comparison_mode, cone_direction, show_512d, show_512gt):
         if not comparison_mode:
             return {}
-        return _build_compare_scatter("trimap", dataset_name, sel, mode, k_neighbors, traversal_path, labels_data, target_names, data_store, points, cone_direction, show_512d)
+        return _build_compare_scatter("trimap", dataset_name, sel, mode, k_neighbors, traversal_path, 
+                                      labels_data, target_names, data_store, points, cone_direction, show_512d)
 
 #####################################################################################
     # ── Cross-projection brushing ───────────────────────────────────────────────
@@ -4065,9 +4007,11 @@ def register_callbacks(app: dash.Dash) -> None:
     )
 
 #####################################################################################
+# For Hyperparameter display according to the projection user clicks
     @app.callback(
         Output("hyperparams-table", "children"),
         Input("proj", "data"),
+        prevent_initial_call=False,
     )
     def _update_hyperparams_display(projection_method):
         """Update hyperparameters display based on selected projection method."""
@@ -4266,6 +4210,47 @@ def register_callbacks(app: dash.Dash) -> None:
         if new:
             return True, track_on, knob_on
         return False, track_off, knob_off
+    
+#####################################################################################
+# Toggle Ground Truth children button
+    @app.callback(
+        Output("show-512gt", "data"),
+        Output("show-512gt-toggle", "style"),
+        Output("show-512gt-knob", "style"),
+        Input("show-512gt-toggle", "n_clicks"),
+        State("show-512gt", "data"),
+        prevent_initial_call=True,
+    )
+    def _toggle_show_512gt(n_clicks, current):
+        new = not current
+        base = {
+            "marginTop": "0.4rem",
+            "padding": "0.3rem 0.7rem",
+            "fontSize": "0.75rem",
+            "border": "1px solid #8e44ad",
+            "borderRadius": "5px",
+            "color": "white",
+            "cursor": "pointer",
+        }
+        track_on = {
+            "width": "44px", "height": "24px",
+            "backgroundColor": "#41ae76",
+            "borderRadius": "12px", "border": "none",
+            "cursor": "pointer", "padding": "3px",
+            "display": "flex", "alignItems": "center",
+            "transition": "background-color 0.2s",
+        }
+        track_off = {**track_on, "backgroundColor": "#4a5568"}
+        knob_on = {
+            "width": "18px", "height": "18px",
+            "backgroundColor": "white", "borderRadius": "50%",
+            "transition": "transform 0.2s",
+            "transform": "translateX(20px)",
+        }
+        knob_off = {**knob_on, "transform": "translateX(0px)"}
+        if new:
+            return True, track_on, knob_on
+        return False, track_off, knob_off
 
 #####################################################################################
 # CLICKABLE Pills (cone mode right panel)
@@ -4289,6 +4274,7 @@ def register_callbacks(app: dash.Dash) -> None:
         return clicked_idx
   
 #####################################################################################
+# Cone Button panels for selecting a cone
     @app.callback(
         Output("cone-tab-bar", "children"),
         Input("sel", "data"),
@@ -4342,7 +4328,7 @@ def register_callbacks(app: dash.Dash) -> None:
         return tabs
 
 #####################################################################################
-    #####################################################################################
+# Show the specific cone metrics when clicked on the right panel
     @app.callback(
         Output("cone-active-tab", "data"),
         Input({"type": "cone-tab", "index": dash.ALL}, "n_clicks"),
@@ -4395,7 +4381,7 @@ def register_callbacks(app: dash.Dash) -> None:
         return pair
 
 #############################################################################
-# Clear the pair of intersection when reselct (or for global Intersec)
+# Clear the pair of intersection when reselect (or for global Intersec)
     @app.callback(
         Output("pill-highlight", "data", allow_duplicate=True),
         Output("pair-highlight", "data", allow_duplicate=True),

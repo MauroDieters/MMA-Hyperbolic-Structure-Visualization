@@ -1,6 +1,6 @@
 import numpy as np
 import torch
-import lorentz as L
+from . import lorentz as L
 
 
 def interpolate(model, feats: torch.Tensor, root_feat: torch.Tensor, steps: int):

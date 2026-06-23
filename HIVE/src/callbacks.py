@@ -576,7 +576,8 @@ def _create_full_interactive_scatter(x, y, labels, target_names, emb_labels, tit
 
 #-------------------------------------------------------------------------------------
 def _add_cones_to_fig(fig, dx, dy, sel, cone_direction, mode, dataset_name,
-                      show_512d, show_512gt, cone_colors, disk_radius):
+                      show_512d, show_512gt, cone_colors, disk_radius,
+                      points=None, emb_labels=None):
     """
     Draw entailment-cone wedges (+ optional 512D rings) onto a compare-panel fig.
 
@@ -610,6 +611,55 @@ def _add_cones_to_fig(fig, dx, dy, sel, cone_direction, mode, dataset_name,
                 fillcolor=color["fill"], line=dict(color=color["line"], width=1.5, dash="dot"),
                 layer="below"))
     fig.update_layout(shapes=shapes)
+
+    # ── Ground Geometry: 512D cone membership rings (projection-independent) ──
+    if show_512d:
+        hl_out, hl_in = [], []
+        for anchor_idx in sel:
+            if anchor_idx >= len(dx):
+                continue
+            hl = compute_cone_highlights_512d(anchor_idx=anchor_idx,
+                                              dataset_name=dataset_name, scale=1.0, band=None)
+            if cone_direction in ("outward", "both"):
+                hl_out += hl["outward_512d"]
+            if cone_direction in ("inward", "both"):
+                hl_in += hl["inward_512d"]
+        hl_out = [i for i in set(hl_out) if i < len(dx) and i not in sel]
+        hl_in = [i for i in set(hl_in) if i < len(dx) and i not in sel]
+        if hl_out:
+            fig.add_trace(go.Scatter(x=[dx[i] for i in hl_out], y=[dy[i] for i in hl_out],
+                mode="markers", marker=dict(size=11, color="rgba(0,0,0,0)",
+                line=dict(width=2, color="#9b59b6")),
+                name="512D outward cone", hoverinfo="skip", showlegend=True))
+        if hl_in:
+            fig.add_trace(go.Scatter(x=[dx[i] for i in hl_in], y=[dy[i] for i in hl_in],
+                mode="markers", marker=dict(size=11, color="rgba(0,0,0,0)",
+                line=dict(width=2, color="#d7bde2")),
+                name="512D inward cone", hoverinfo="skip", showlegend=True))
+
+    # ── GT Children: ground-truth hierarchical children (same tree, deeper level) ──
+    if show_512gt and points and emb_labels:
+        from .cone_utils import LEVEL_MAP as _LEVEL_MAP
+        gt = set()
+        for anchor_idx in sel:
+            if anchor_idx >= len(emb_labels) or anchor_idx >= len(points):
+                continue
+            anchor_tree = points[anchor_idx].get("tree_id", "")
+            anchor_level = _LEVEL_MAP.get(emb_labels[anchor_idx], 0)
+            for i, pt in enumerate(points):
+                if i == anchor_idx or pt.get("tree_id", "") != anchor_tree:
+                    continue
+                pt_level = _LEVEL_MAP.get(emb_labels[i] if i < len(emb_labels) else "", 0)
+                if pt_level > anchor_level:
+                    gt.add(i)
+        gt_visible = [i for i in gt if i < len(dx) and i not in sel]
+        if gt_visible:
+            fig.add_trace(go.Scatter(x=[dx[i] for i in gt_visible], y=[dy[i] for i in gt_visible],
+                mode="markers", marker=dict(size=13, color="rgba(0,0,0,0)",
+                line=dict(width=2.5, color="#8e44ad")),
+                name="GT children", hoverinfo="skip", showlegend=True))
+
+    return fig
 ##########################################################################################################
 
 #-----------------------------------------------------------------------------------#
@@ -3632,7 +3682,7 @@ def register_callbacks(app: dash.Dash) -> None:
         # Create the figure with all mode features
         fig = _create_full_interactive_scatter(dx, dy, labels, target_names, emb_labels, "", sel, neighbor_indices, tree_connections, interp_transformed, mode, points=points)
         dr = float(np.max(np.sqrt(dx**2 + dy**2))) + 0.08 if len(dx) else 1.0
-        fig = _add_cones_to_fig(fig, dx, dy, sel, cone_direction, mode, dataset_name, show_512d, show_512gt, CONE_COLORS, dr)
+        fig = _add_cones_to_fig(fig, dx, dy, sel, cone_direction, mode, dataset_name, show_512d, show_512gt, CONE_COLORS, dr, points=points, emb_labels=emb_labels)
         return fig
 
 #####################################################################################
@@ -3795,13 +3845,13 @@ def register_callbacks(app: dash.Dash) -> None:
         # Create the figure with all mode features
         fig = _create_full_interactive_scatter(dx, dy, labels, target_names, emb_labels, "", sel, neighbor_indices, tree_connections, interp_transformed, mode, points=points)
         dr = float(np.max(np.sqrt(dx**2 + dy**2))) + 0.08 if len(dx) else 1.0
-        fig = _add_cones_to_fig(fig, dx, dy, sel, cone_direction, mode, dataset_name, show_512d, show_512gt, CONE_COLORS, dr)
+        fig = _add_cones_to_fig(fig, dx, dy, sel, cone_direction, mode, dataset_name, show_512d, show_512gt, CONE_COLORS, dr, points=points, emb_labels=emb_labels)
         return fig
 
 #####################################################################################
     def _build_compare_scatter(proj_name, dataset_name, sel, mode, k_neighbors,
                                traversal_path, labels_data, target_names, data_store, points,
-                               cone_direction="outward", show_512d=False):
+                               cone_direction="outward", show_512d=False, show_512gt=False):
         """Shared loader/renderer for an extra projection panel in Compare-All view.
 
         Mirrors _scatter_plot_1/_scatter_plot_2 but loads {proj_name}_embeddings.pkl,
@@ -3891,7 +3941,7 @@ def register_callbacks(app: dash.Dash) -> None:
         # UMAP is Euclidean — don't draw the Poincaré disk boundary around it.
         fig = _create_full_interactive_scatter(dx, dy, labels, target_names, emb_labels, "", sel, neighbor_indices, tree_connections, interp_transformed, mode, points=points, draw_boundary=(proj_name != "umap"))
         dr = float(np.max(np.sqrt(dx**2 + dy**2))) + 0.08 if len(dx) else 1.0
-        return _add_cones_to_fig(fig, dx, dy, sel, cone_direction, mode, dataset_name, show_512d, show_512gt, CONE_COLORS, dr)
+        return _add_cones_to_fig(fig, dx, dy, sel, cone_direction, mode, dataset_name, show_512d, show_512gt, CONE_COLORS, dr, points=points, emb_labels=emb_labels)
 
 #####################################################################################
     @app.callback(
@@ -3915,8 +3965,8 @@ def register_callbacks(app: dash.Dash) -> None:
                         cone_direction, show_512d, show_512gt):
         if not comparison_mode:
             return {}
-        return _build_compare_scatter("umap", dataset_name, sel, mode, k_neighbors, traversal_path, 
-                                      labels_data, target_names, data_store, points, cone_direction, show_512d)
+        return _build_compare_scatter("umap", dataset_name, sel, mode, k_neighbors, traversal_path,
+                                      labels_data, target_names, data_store, points, cone_direction, show_512d, show_512gt)
 
 #####################################################################################
     @app.callback(
@@ -3940,8 +3990,8 @@ def register_callbacks(app: dash.Dash) -> None:
                         comparison_mode, cone_direction, show_512d, show_512gt):
         if not comparison_mode:
             return {}
-        return _build_compare_scatter("trimap", dataset_name, sel, mode, k_neighbors, traversal_path, 
-                                      labels_data, target_names, data_store, points, cone_direction, show_512d)
+        return _build_compare_scatter("trimap", dataset_name, sel, mode, k_neighbors, traversal_path,
+                                      labels_data, target_names, data_store, points, cone_direction, show_512d, show_512gt)
 
 #####################################################################################
     # ── Cross-projection brushing ───────────────────────────────────────────────

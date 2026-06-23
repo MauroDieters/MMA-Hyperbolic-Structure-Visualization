@@ -1,6 +1,6 @@
-# HIVE: Hyperbolic Interactive Visualization Explorer
+# HIVE-C: Hyperbolic Interactive Visualization Explorer
 
-HIVE is an interactive dashboard for visualizing and exploring hierarchical and
+HIVE-C is an interactive dashboard for visualizing and exploring hierarchical and
 hyperbolic data representations. This fork extends the original
 [HIVE](https://github.com/GoncaloBFM/HIVE) with two additional projection methods
 (**Euclidean UMAP** and **fully hyperbolic TriMap**), an **entailment-cone**
@@ -34,7 +34,7 @@ entailment cones, all colour-coded by node type (parent/child × text/image).
 
 ## Installation
 
-HIVE uses the [`uv`](https://docs.astral.sh/uv/) package manager.
+HIVE-C uses the [`uv`](https://docs.astral.sh/uv/) package manager.
 
 ```bash
 # 1. install uv (see https://docs.astral.sh/uv/ for other platforms)

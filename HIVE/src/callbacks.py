@@ -2688,7 +2688,9 @@ def register_callbacks(app: dash.Dash) -> None:
                 }
             )
 
-        from .cone_utils import compute_cone_data, get_direct_relatives
+        from .cone_utils import (
+            compute_cone_data, get_direct_relatives, level_restricted_pool_size,
+        )
 
         n_pool = max(len(coords_2d) - 1, 0)  # candidate points for baseline
 
@@ -2747,19 +2749,31 @@ def register_callbacks(app: dash.Dash) -> None:
                 }
             )
         
-        def _precision_block(cov_gt, cone_members, cov_noun, n_pool):
-            """Precision of the cone vs ground-truth relatives, with the
-            random baseline and lift over chance.
+        def _precision_block(cov_gt, cone_members, cov_noun, n_pool, anchor_idx):
+            """Precision of the cone vs ground-truth relatives, with random
+            baselines and lift over chance.
 
             precision = cone members that are GT relatives / all cone members.
             Uses the same cone as the Coverage metric above, so the GT-relative
             hit count lines up between the two.
 
-            Random baseline = expected precision when drawing the same number
-            of points at random from the candidate pool = |GT| / pool_size
-            (the base rate of GT relatives). Lift = precision / baseline tells
-            you how many times better than chance the cone actually is.
+            We report precision against two random baselines, each the expected
+            precision from drawing |cone| points at random from a pool:
+
+              * all candidate points (every point except the anchor), and
+              * the level-restricted pool — only the deeper levels (outward
+                cone) or shallower levels (inward cone) the cone can actually
+                select from.
+
+            The level-restricted baseline is the fair comparison: the cone's
+            radial gate means it can only ever capture points at those levels,
+            so an all-points baseline would credit the cone for a restriction
+            the geometry imposes for free. Lift = precision / baseline tells you
+            how many times better than chance the cone is.
             """
+            direction = "inward" if cov_noun == "parents" else "outward"
+            level_word = "shallower" if direction == "inward" else "deeper"
+
             gt_set = set(cov_gt)
             cone_set = set(cone_members)
             hits = len(gt_set & cone_set)
@@ -2767,16 +2781,36 @@ def register_callbacks(app: dash.Dash) -> None:
             clr = ("#28a745" if precision_pct >= 60 else
                    "#ffc107" if precision_pct >= 30 else "#dc3545")
 
-            # Random baseline: pick |cone| points at random from the pool.
-            baseline_pct = (len(gt_set) / n_pool * 100) if n_pool > 0 else 0.0
-            if baseline_pct > 0:
-                lift = precision_pct / baseline_pct
-                lift_txt = f"{lift:.1f}× vs chance"
-                lift_clr = ("#28a745" if lift >= 2 else
-                            "#ffc107" if lift >= 1 else "#dc3545")
-            else:
-                lift_txt = "n/a"
-                lift_clr = "#6c757d"
+            # Pool the cone can actually select from (deeper/shallower levels).
+            n_pool_level = level_restricted_pool_size(anchor_idx, labels_2d, direction)
+
+            def _baseline_lift(pool_size):
+                """Base rate of GT relatives in `pool_size` points (= chance
+                precision) and the cone's lift over it."""
+                base_pct = (len(gt_set) / pool_size * 100) if pool_size > 0 else 0.0
+                if base_pct > 0:
+                    lift = precision_pct / base_pct
+                    return base_pct, f"{lift:.1f}× vs chance", (
+                        "#28a745" if lift >= 2 else
+                        "#ffc107" if lift >= 1 else "#dc3545")
+                return base_pct, "n/a", "#6c757d"
+
+            base_lvl_pct, lift_lvl_txt, lift_lvl_clr = _baseline_lift(n_pool_level)
+            base_all_pct, lift_all_txt, lift_all_clr = _baseline_lift(n_pool)
+
+            def _baseline_row(label, base_pct, lift_txt, lift_clr, fair):
+                return html.Div([
+                    html.Span(label,
+                              style={"fontSize": "0.74rem", "color": "#6c757d"}),
+                    html.Span(f"{base_pct:.1f}%  ",
+                              style={"fontSize": "0.74rem", "color": "#495057",
+                                     "fontWeight": "600"}),
+                    html.Span(lift_txt,
+                              style={"fontSize": "0.74rem",
+                                     "fontWeight": "700" if fair else "600",
+                                     "color": lift_clr,
+                                     "opacity": "1" if fair else "0.7"}),
+                ], style={"margin": "0.2rem 0 0 0"})
 
             return html.Div([
                 html.Hr(style={"margin": "0.4rem 0"}),
@@ -2792,19 +2826,15 @@ def register_callbacks(app: dash.Dash) -> None:
                         if cone_set else "empty cone",
                         style={"fontSize": "0.78rem", "color": "#6c757d"}),
                 ]),
-                html.Div([
-                    html.Span("Random baseline: ",
-                              style={"fontSize": "0.74rem", "color": "#6c757d"}),
-                    html.Span(f"{baseline_pct:.1f}%  ",
-                              style={"fontSize": "0.74rem", "color": "#495057",
-                                     "fontWeight": "600"}),
-                    html.Span(lift_txt,
-                              style={"fontSize": "0.74rem", "fontWeight": "700",
-                                     "color": lift_clr}),
-                ], style={"margin": "0.2rem 0 0 0"}),
+                # Fair (level-restricted) baseline first, then the all-points one.
+                _baseline_row(f"Baseline ({level_word}-level pool): ",
+                              base_lvl_pct, lift_lvl_txt, lift_lvl_clr, fair=True),
+                _baseline_row("Baseline (all points): ",
+                              base_all_pct, lift_all_txt, lift_all_clr, fair=False),
                 html.P(
-                    f"(chance precision from picking {len(cone_set)} of "
-                    f"{n_pool} points at random)",
+                    f"Fair baseline = chance precision from picking "
+                    f"{len(cone_set)} of {n_pool_level} {level_word}-level points "
+                    f"(the pool the cone can select); all-points pool = {n_pool}.",
                     style={"fontSize": "0.68rem", "color": "#adb5bd",
                            "fontStyle": "italic", "margin": "0.1rem 0 0 0"}),
             ])
@@ -3228,7 +3258,7 @@ def register_callbacks(app: dash.Dash) -> None:
                         style={"fontSize": "0.78rem", "color": "#6c757d"}),
                 ]),
 
-                _precision_block(cov_gt, cov_cone, cov_noun, n_pool),
+                _precision_block(cov_gt, cov_cone, cov_noun, n_pool, anchor_idx),
 
                 _trained_recall_block(cov_direct, cov_cone, cov_noun),
 
@@ -3392,7 +3422,7 @@ def register_callbacks(app: dash.Dash) -> None:
             ]),
 
             # ── Precision of the cone (same cone as Coverage above) ───
-            _precision_block(cov_gt, cov_cone, cov_noun, n_pool),
+            _precision_block(cov_gt, cov_cone, cov_noun, n_pool, anchor_idx),
 
             # ── Recall against trained (direct adjacent-level) pairs ───
             _trained_recall_block(cov_direct, cov_cone, cov_noun),

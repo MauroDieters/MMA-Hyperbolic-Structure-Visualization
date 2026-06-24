@@ -131,6 +131,52 @@ def get_direct_relatives(
     return direct_children, direct_parents
 
 #---------------------------------------------------------------------
+def level_restricted_pool_size(
+    anchor_idx: int,
+    labels_2d: list,
+    direction: str
+) -> int:
+    """
+    Size of the candidate pool a *fair* random precision baseline should draw
+    from: the points the cone can actually select given its radial gate.
+
+    An outward cone only ever captures points deeper in the hierarchy than the
+    anchor; an inward cone only ever captures shallower ones. A baseline drawn
+    from *all* points would credit the cone for that level restriction even
+    though the geometry imposes it for free, inflating the lift over chance.
+    Restricting the pool to the selectable levels removes that unearned credit.
+
+    Unlike the geometric cone, this count is projection-independent — it depends
+    only on the hierarchy levels, so the same baseline is comparable across
+    every projection.
+
+    Args:
+        anchor_idx: index of the selected point
+        labels_2d:  per-point embedding-type labels (parent/child x text/image)
+        direction:  "outward" (deeper levels) or "inward" (shallower levels)
+
+    Returns:
+        Number of points at a selectable level, excluding the anchor and any
+        unlabeled (level 0) points.
+    """
+    anchor_level = LEVEL_MAP.get(labels_2d[anchor_idx], 0)
+    if anchor_level == 0:
+        return 0
+
+    count = 0
+    for i, lbl in enumerate(labels_2d):
+        if i == anchor_idx:
+            continue
+        lvl = LEVEL_MAP.get(lbl, 0)
+        if lvl == 0:
+            continue
+        if direction == "outward" and lvl > anchor_level:
+            count += 1
+        elif direction == "inward" and lvl < anchor_level:
+            count += 1
+    return count
+
+#---------------------------------------------------------------------
 def compute_cone_aperture_2d(
     anchor_2d: np.ndarray,
     scale: float = CONE_SCALE_2D

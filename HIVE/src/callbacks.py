@@ -1337,7 +1337,7 @@ def register_callbacks(app: dash.Dash) -> None:
 
         # CONES -------------------------------------------------------------------------------------------------
         # ── Cone mode: draw wedge + highlight 512D members ──────────── Also (cone + tree) works here
-        if mode in ("cones", "tree_cones") and sel and len(sel) >= 1:
+        if mode in ("cones", "tree_cones") and sel and len(sel) >= 1 and proj != "umap":
             from .cone_utils import (
                 compute_cone_aperture_2d,
                 compute_cone_wedge_path,
@@ -2810,7 +2810,7 @@ def register_callbacks(app: dash.Dash) -> None:
                                      "fontWeight": "700" if fair else "600",
                                      "color": lift_clr,
                                      "opacity": "1" if fair else "0.7"}),
-                ], style={"margin": "0.2rem 0 0 0"})
+                ], style={"margin": "0.2rem 0 0 0", "display": "block"})
 
             return html.Div([
                 html.Hr(style={"margin": "0.4rem 0"}),
@@ -2832,9 +2832,9 @@ def register_callbacks(app: dash.Dash) -> None:
                 _baseline_row("Baseline (all points): ",
                               base_all_pct, lift_all_txt, lift_all_clr, fair=False),
                 html.P(
-                    f"Fair baseline = chance precision from picking "
-                    f"{len(cone_set)} of {n_pool_level} {level_word}-level points "
-                    f"(the pool the cone can select); all-points pool = {n_pool}.",
+                    f"Baseline ({level_word}-level pool) = chance precision from picking "
+                    f"{len(cone_set)} of {n_pool_level} {level_word}-level points; "
+                    f"Baseline (all points) pool = {n_pool}.",
                     style={"fontSize": "0.68rem", "color": "#adb5bd",
                            "fontStyle": "italic", "margin": "0.1rem 0 0 0"}),
             ])
@@ -3999,6 +3999,8 @@ def register_callbacks(app: dash.Dash) -> None:
         # UMAP is Euclidean — don't draw the Poincaré disk boundary around it.
         fig = _create_full_interactive_scatter(dx, dy, labels, target_names, emb_labels, "", sel, neighbor_indices, tree_connections, interp_transformed, mode, points=points, draw_boundary=(proj_name != "umap"))
         dr = float(np.max(np.sqrt(dx**2 + dy**2))) + 0.08 if len(dx) else 1.0
+        if proj_name == "umap":
+            return fig
         return _add_cones_to_fig(fig, dx, dy, sel, cone_direction, mode, dataset_name, show_512d, CONE_COLORS, dr)
 
 #####################################################################################
